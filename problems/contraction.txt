@@ -1,0 +1,15 @@
+*** Problem Statement ***
+
+Let $A = \mathbb{R}^n$ be an affine space equipped with a cellular structure where each cell $\sigma$ is a convex polyhedron. Let $C_i(A)$ be the free $\mathbb{Q}^n$ module with a basis consisting of the $i$-dimensional cells of $A$, and let $\partial: C_i(A) \to C_{i-1}(A)$ be the standard boundary operator. Let $v_0 \in A$ be a fixed vertex (which we may identify with the origin).
+We consider a discrete group $N$ of affine isometries of $A$ that preserves the cell structure and fixes the vertex $v_0$.
+For any point $y \in A$, let $[v_0, y]$ denote the line segment connecting $v_0$ to $y$. 
+For any cell $\sigma \subset A$, the geodesic cone, denoted $K(v_0, \sigma)$, is defined as the union of all segments $[v_0, y]$ for all $y \in \sigma$.
+
+
+The Problem: Construct a sequence of homomorphisms 
+$c_i: C_i(A) \to C_{i+1}(A)$ for $i \geq -1$ (with $C_{-1}(A) = \mathbb{Q}$ and $c_{-1}(1) = v_0$) such that the following three properties are satisfied:
+1. Chain Homotopy Identity: For all $i \geq 0$, $c_{i-1}\partial + \partial c_i = \text{Id}$.
+2. $N$-Equivariance: The map $c$ is $N$-equivariant, meaning $g(c_i(\sigma)) = c_i(g\sigma)$ for all $g \in N$ and any cell $\sigma$.
+3. Conic Support: If $c_i(\sigma) = \sum a_\tau \tau$, then any cell $\tau$ with a non-zero coefficient $a_\tau \neq 0$ must be contained in the smallest subcomplex of $A$ containing the geodesic cone $K(v_0, \sigma)$.
+
+
