@@ -1,6 +1,6 @@
 *** Problem Statement ***
 
-Let $A = \mathbb{R}^n$ be an affine space equipped with a cellular structure where each cell $\sigma$ is a convex polyhedron. Let $C_i(A)$ be the free $\mathbb{Q}^n$ module with a basis consisting of the $i$-dimensional cells of $A$, and let $\partial: C_i(A) \to C_{i-1}(A)$ be the standard boundary operator. Let $v_0 \in A$ be a fixed vertex (which we may identify with the origin).
+Let $A = \mathbb{R}^n$ be an affine space equipped with a cellular structure where each cell $\sigma$ is a convex polyhedron. Let $C_i(A)$ be the free $\mathbb{Q}$ module with a basis consisting of the $i$-dimensional cells of $A$, and let $\partial: C_i(A) \to C_{i-1}(A)$ be the standard boundary operator. Let $v_0 \in A$ be a fixed vertex (which we may identify with the origin).
 We consider a discrete group $N$ of affine isometries of $A$ that preserves the cell structure and fixes the vertex $v_0$.
 For any point $y \in A$, let $[v_0, y]$ denote the line segment connecting $v_0$ to $y$. 
 For any cell $\sigma \subset A$, the geodesic cone, denoted $K(v_0, \sigma)$, is defined as the union of all segments $[v_0, y]$ for all $y \in \sigma$.
