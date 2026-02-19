@@ -23,9 +23,9 @@ SOFTWARE.
 """
 
 """
-Gemini Agent for IMO problem solving.
+Kimi Agent for IMO problem solving.
 
-This module provides the Gemini-specific agent implementation using the
+This module provides the Kimi-specific agent implementation using the
 refactored architecture with ProofEngine and LLMClient.
 """
 
@@ -37,15 +37,15 @@ from typing import Optional, Callable
 # Import the new architecture components
 try:
     from .proof_engine import ProofEngine
-    from .llm_clients import GeminiClient, set_default_client
+    from .llm_clients import KimiClient, set_default_client
     from . import utils
 except ImportError:
     from proof_engine import ProofEngine
-    from llm_clients import GeminiClient, set_default_client
+    from llm_clients import KimiClient, set_default_client
     import utils
 
-# Configuration
-MODEL_NAME = "gemini-2.0-flash"
+# Configuration - Default to thinking-capable model
+MODEL_NAME = "kimi-k1.5"
 
 # Re-export utility functions for backwards compatibility
 set_log_file = utils.set_log_file
@@ -63,7 +63,6 @@ TOKEN_QUOTA_WARNING = quota_manager.quota_warning
 
 def check_token_quota(api_key: str) -> bool:
     """Check API token quota."""
-    # Quota checking is now handled by the quota_manager
     return not quota_manager.quota_exceeded
 
 
@@ -71,7 +70,7 @@ def set_model(model_name: str):
     """Set the model name."""
     global MODEL_NAME
     MODEL_NAME = model_name
-    print(f"Gemini model set to: {model_name}")
+    print(f"Kimi model set to: {model_name}")
 
 
 def agent(problem_statement: str,
@@ -83,7 +82,7 @@ def agent(problem_statement: str,
           show_thinking: bool = True,
           interactive: bool = False) -> Optional[str]:
     """
-    Main agent function that processes and solves mathematical problems.
+    Main agent function that processes and solves mathematical problems using Kimi API.
     
     Args:
         problem_statement: The mathematical problem to solve
@@ -99,13 +98,13 @@ def agent(problem_statement: str,
         The final solution, or None if failed
     """
     # Get API key
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("KIMI_API_KEY")
     if not api_key:
-        print("Error: GOOGLE_API_KEY environment variable not set.")
+        print("Error: KIMI_API_KEY environment variable not set.")
         sys.exit(1)
     
     # Create LLM client
-    client = GeminiClient(api_key=api_key, model_name=MODEL_NAME)
+    client = KimiClient(api_key=api_key, model_name=MODEL_NAME)
     set_default_client(client)
     
     # Create proof engine
@@ -132,9 +131,9 @@ def agent(problem_statement: str,
 
 def main():
     """Main entry point for command-line usage."""
-    parser = argparse.ArgumentParser(description="Gemini Agent for IMO problem solving")
+    parser = argparse.ArgumentParser(description="Kimi Agent for IMO problem solving")
     parser.add_argument("problem_file", help="Path to the problem file")
-    parser.add_argument("--model", default="gemini-2.5-pro", help="Model name to use")
+    parser.add_argument("--model", default="kimi-k1.5", help="Model name to use")
     parser.add_argument("--memory", help="Memory file to resume from")
     parser.add_argument("--no-streaming", action="store_true", help="Disable streaming")
     parser.add_argument("--no-thinking", action="store_true", help="Hide thinking process")
