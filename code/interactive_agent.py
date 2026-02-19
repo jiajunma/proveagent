@@ -77,7 +77,7 @@ from res2md import memory_to_tex as res2md_memory_to_tex
 # --- Fast models for cheap tex composition/fixing (per provider) ---
 # For kimi: no fast/cheap model, use current model with thinking disabled
 FAST_MODELS = {
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-2.5-flash-lite",
     "openai": "gpt-4o-mini",
     "kimi": None,  # Use current model with thinking disabled
 }
@@ -136,7 +136,7 @@ def call_fast_model(prompt: str, api_key: str, provider: str = "gemini",
     provider = provider.lower()
     
     if provider == "gemini":
-        model = model_name or FAST_MODELS.get("gemini", "gemini-2.0-flash")
+        model = model_name or FAST_MODELS.get("gemini", "gemini-2.5-flash-lite")
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         payload = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -209,7 +209,7 @@ def call_fast_model_chat(
     provider = provider.lower()
     
     if provider == "gemini":
-        model = model_name or FAST_MODELS.get("gemini", "gemini-2.0-flash")
+        model = model_name or FAST_MODELS.get("gemini", "gemini-2.5-flash-lite")
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         payload = {
             "systemInstruction": {"role": "system", "parts": [{"text": system_prompt}]},
@@ -402,6 +402,56 @@ def open_pdf(pdf_path: str) -> None:
         print(f"PDF: {path}")
 
 
+def export_to_md(
+    problem: str,
+    solution: str,
+    verification: str,
+    output_dir: str,
+    base_name: str,
+) -> str:
+    """Export solution to Markdown file.
+    
+    This is a robust fallback when PDF generation fails or when pdflatex is not available.
+    Returns the path to the generated MD file.
+    """
+    md_name = f"{base_name}.md"
+    md_path = os.path.join(output_dir, md_name)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Build markdown content
+    lines = []
+    lines.append("# IMO Problem Solution\n")
+    lines.append(f"*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
+    lines.append("---\n")
+    
+    # Problem Statement
+    lines.append("\n## Problem Statement\n")
+    lines.append(problem if problem else "*(No problem statement)*")
+    lines.append("\n")
+    
+    # Solution
+    lines.append("\n## Solution\n")
+    if solution:
+        lines.append(solution)
+    else:
+        lines.append("*(No solution yet)*")
+    lines.append("\n")
+    
+    # Verification
+    lines.append("\n## Verification Report\n")
+    if verification:
+        lines.append(verification)
+    else:
+        lines.append("*(No verification yet)*")
+    lines.append("\n")
+    
+    # Write to file
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    
+    return md_path
+
+
 def export_to_pdf(
     problem: str,
     solution: str,
@@ -416,6 +466,7 @@ def export_to_pdf(
     """Export solution to PDF using the provider's fast model for LaTeX composition.
     
     For kimi: no fast model available, uses current model with thinking disabled.
+    If PDF generation fails, automatically falls back to Markdown export.
     """
     tex_name = f"{base_name}-temp.tex"
     tex_path = os.path.join(output_dir, tex_name)
@@ -491,6 +542,9 @@ def export_to_pdf(
                 print(f"  Fast model fix failed: {e}")
                 break
     print("  Could not fix LaTeX.")
+    print("  Falling back to Markdown export...")
+    md_path = export_to_md(problem, solution, verification, output_dir, base_name)
+    print(f"  ✓ Markdown: {md_path}")
     return False
 
 
@@ -892,14 +946,21 @@ def main():
         print(f"  Agent: {reply}")
         return False
 
-    def do_export():
+    def do_export(fmt: str = "pdf"):
         if not solution:
             print("  No solution yet. Run /run first.")
             return
-        export_to_pdf(
-            problem_statement, solution, full_verification,
-            log_dir, base_name, api_key, provider=provider_name, model_name=model_name,
-        )
+        if fmt.lower() == "md" or fmt.lower() == "markdown":
+            md_path = export_to_md(
+                problem_statement, solution, full_verification,
+                log_dir, base_name,
+            )
+            print(f"  ✓ Markdown exported: {md_path}")
+        else:
+            export_to_pdf(
+                problem_statement, solution, full_verification,
+                log_dir, base_name, api_key, provider=provider_name, model_name=model_name,
+            )
 
     def do_run(streaming=True, show_thinking=True, interactive=True,
                use_provider=None, use_model=None):
@@ -1014,6 +1075,7 @@ def main():
                 print("  /save_as <name>   Save edited problem to a new file")
                 print("  /prompt <text>    Add prompt for next run (or type without /)")
                 print("  /export, /e       Generate PDF (solution + verification)")
+                print("  /export md        Generate Markdown file (fallback when PDF fails)")
                 print("  /status, /s       Show state")
                 print("  /list, /l         List memory files in log-dir")
                 print("  /clear            Clear prompts")
@@ -1041,7 +1103,9 @@ def main():
                     print("\n  Interrupted. Back to prompt.")
             elif cmd in ("export", "e"):
                 try:
-                    do_export()
+                    # Check if format is specified (e.g., /export md or /export pdf)
+                    fmt = rest.strip().lower() if rest else "pdf"
+                    do_export(fmt)
                 except KeyboardInterrupt:
                     print("\n  Interrupted. Back to prompt.")
             elif cmd == "load":

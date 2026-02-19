@@ -246,8 +246,11 @@ TEX_COMPOSE_TEMPLATE = """You are a LaTeX expert. Convert the following mathemat
 
 Requirements:
 - Preserve all mathematical content exactly; use $...$ for inline math, \\[...\\] for display math
-- Convert markdown **bold** to \\textbf{}, ### sections to \\section{}, etc.
+- Convert markdown **bold** to \\textbf{}, #, ##, ###sections to \\section{}, etc.
 - Output ONLY the complete LaTeX source, no explanations
+- ** important **: Don't use #, ##, ### in the LaTeX source. Don't use "**bold**" in the LaTeX source.
+
+
 
 Structure:
 1. Problem Statement
