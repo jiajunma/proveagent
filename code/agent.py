@@ -85,7 +85,7 @@ def close_log_file():
         _log_file.close()
         _log_file = None
 
-def save_memory(memory_file, problem_statement, other_prompts, current_iteration, max_runs, solution=None, verify=None):
+def save_memory(memory_file, problem_statement, other_prompts, current_iteration, max_runs, solution=None, verify=None, full_verification=None):
     """
     Save the current state to a memory file.
     """
@@ -96,6 +96,7 @@ def save_memory(memory_file, problem_statement, other_prompts, current_iteration
         "max_runs": max_runs,
         "solution": solution,
         "verify": verify,
+        "full_verification": full_verification,
         "timestamp": __import__('datetime').datetime.now().isoformat()
     }
     
@@ -418,7 +419,7 @@ def verify_solution(problem_statement, solution, verbose=True):
         print(">>>>>>>Bug report:")
         print(json.dumps(bug_report, indent=4))
     
-    return bug_report, o
+    return bug_report, o, out
 
 def check_if_solution_claimed_complete(solution):
     check_complete_prompt = f"""
@@ -482,15 +483,15 @@ def init_explorations(problem_statement, verbose=True, other_prompts=[]):
     #    return None, None, None, None
     
     print(f">>>>>>> Vefify the solution.")
-    verify, good_verify = verify_solution(problem_statement, solution, verbose)
+    verify, good_verify, full_verification = verify_solution(problem_statement, solution, verbose)
 
     print(f">>>>>>> Initial verification: ")
     print(json.dumps(verify, indent=4))
     print(f">>>>>>> verify results: {good_verify}")
     
-    return p1, solution, verify, good_verify
+    return p1, solution, verify, good_verify, full_verification
 
-def agent(problem_statement, other_prompts=[], memory_file=None, resume_from_memory=False):
+def agent(problem_statement, other_prompts=[], memory_file=None, resume_from_memory=False, on_iteration_result=None):
     if resume_from_memory and memory_file:
         # Load memory and resume from previous state
         memory = load_memory(memory_file)
@@ -513,13 +514,25 @@ def agent(problem_statement, other_prompts=[], memory_file=None, resume_from_mem
         verify = None
     
     if solution is None:
-        p1, solution, verify, good_verify = init_explorations(problem_statement, True, other_prompts)
+        p1, solution, verify, good_verify, full_verification = init_explorations(problem_statement, True, other_prompts)
         if(solution is None):
             print(">>>>>>> Failed in finding a complete solution.")
             return None
+        # First result: optional callback (e.g. auto-export PDF)
+        if on_iteration_result and solution:
+            try:
+                on_iteration_result(problem_statement, solution, full_verification, -1)
+            except Exception as e:
+                print(f">>>>>>> on_iteration_result callback error: {e}")
     else:
         # We have a solution from memory, need to get good_verify
-        _, good_verify = verify_solution(problem_statement, solution)
+        _, good_verify, full_verification = verify_solution(problem_statement, solution)
+        # Resumed result: optional callback
+        if on_iteration_result and solution:
+            try:
+                on_iteration_result(problem_statement, solution, full_verification, current_iteration - 1)
+            except Exception as e:
+                print(f">>>>>>> on_iteration_result callback error: {e}")
 
     error_count = 0
     correct_count = 1
@@ -572,7 +585,7 @@ def agent(problem_statement, other_prompts=[], memory_file=None, resume_from_mem
             #    return None
 
         print(f">>>>>>> Verify the solution.")
-        verify, good_verify = verify_solution(problem_statement, solution)
+        verify, good_verify, full_verification = verify_solution(problem_statement, solution)
 
         if("yes" in good_verify.lower()):
             print(">>>>>>> Solution is good, verifying again ...")
@@ -582,7 +595,14 @@ def agent(problem_statement, other_prompts=[], memory_file=None, resume_from_mem
 
         # Save memory every iteration
         if memory_file:
-            save_memory(memory_file, problem_statement, other_prompts, i, 30, solution, verify)
+            save_memory(memory_file, problem_statement, other_prompts, i, 30, solution, verify, full_verification)
+
+        # Optional callback: e.g. auto-export PDF after each result (for interactive mode)
+        if on_iteration_result and solution:
+            try:
+                on_iteration_result(problem_statement, solution, full_verification, i)
+            except Exception as e:
+                print(f">>>>>>> on_iteration_result callback error: {e}")
         
         if(correct_count >= 5):
             print(">>>>>>> Correct solution found.")
@@ -593,14 +613,14 @@ def agent(problem_statement, other_prompts=[], memory_file=None, resume_from_mem
             print(">>>>>>> Failed in finding a correct solution.")
             # Save final state before returning
             if memory_file:
-                save_memory(memory_file, problem_statement, other_prompts, i, 30, solution, verify)
+                save_memory(memory_file, problem_statement, other_prompts, i, 30, solution, verify, full_verification)
             return None
 
     if(not success):
         print(">>>>>>> Failed in finding a correct solution.")
         # Save final state before returning
         if memory_file:
-            save_memory(memory_file, problem_statement, other_prompts, 30, 30, solution, verify)
+            save_memory(memory_file, problem_statement, other_prompts, 30, 30, solution, verify, full_verification)
         return None
         
 if __name__ == "__main__":
