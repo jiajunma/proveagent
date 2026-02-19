@@ -4,6 +4,8 @@
 # Core: HTTP for Gemini/OpenAI/XAI API (agent, interactive_agent, agent_oai, agent_xai)
 requests>=2.28.0,<3.0
 
+# For Kimi API (uses OpenAI-compatible SDK)
+openai>=1.0.0
+
 # Optional (for code/community_codes/agent_openaiSDK.py):
 # python-dotenv>=1.0.0
-# openai>=1.0.0

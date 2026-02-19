@@ -1,0 +1,20 @@
+*** Problem Statement ***
+
+Dimensions of Borel Orbits on Matrix Spaces over $\mathbb{C}$
+Let $X = M(m,n)$ be the vector space of $m \times n$ real matrices. Let $B_m \subset GL_m(\mathbb{C})$ and $B_n \subset GL_n(\mathbb{C})$ be the Borel subgroups consisting of upper triangular matrices. 
+
+A **partial matching** $pm$ is a subset of the product set $[m] \times [n]$ such that for any two distinct pairs $(i, j), (i', j') \in pm$, we have $i \neq i'$ and $j \neq j'$. 
+For each $pm$, we define a representative matrix $A_{pm} \in X$ where:
+$$(A_{pm})_{ij} = \begin{cases} 1 & \text{if } (i, j) \in pm \\ 0 & \text{otherwise} \end{cases}$$
+
+Consider the action of the Lie group $G = B_m \times B_n$ on $X$ defined by:
+$$\Phi: (B_m \times B_n) \times X \to X, \quad (b_1, b_2) \cdot A = b_1 A b_2^{T}$$
+Here $b_2^T$ is the transpose of the matrix $b_2$. 
+Let $Y_{pm}$ denote the orbit $G \cdot A_{pm}$.
+
+Goal: Compute the dimension of the orbit $Y_{pm}$. 
+
+Hint: The dimension of $Y_{pm} = dim B_1 + dim B_2 -  dim Stab_{B_1 \times B_2}(A_pm)$. 
+To compute $dim Stab_{B_1 \times B_2}(A_pm)$ one can reduce the problem to compute the dimension of its Lie algebra. 
+
+

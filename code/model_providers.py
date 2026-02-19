@@ -10,8 +10,16 @@ import requests
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any, Tuple
 
+# 尝试导入OpenAI SDK (用于Kimi)
+try:
+    from openai import OpenAI
+    OPENAI_SDK_AVAILABLE = True
+except ImportError:
+    OPENAI_SDK_AVAILABLE = False
+
 # 全局常量
 DEFAULT_TIMEOUT = 7200  # API请求超时时间（秒）
+LATEX_TIMEOUT = 600  # LaTeX生成任务的超时时间（秒）
 
 class ModelProvider(ABC):
     """模型提供商的抽象基类"""
@@ -442,29 +450,44 @@ class OpenAIProvider(ModelProvider):
 
 
 class KimiProvider(ModelProvider):
-    """Kimi API提供商实现"""
+    """Kimi API提供商实现 - 使用OpenAI SDK"""
 
-    # 支持思考能力的模型列表
+    # 支持思考能力的模型列表 (返回 reasoning_content)
     THINKING_MODELS = [
-        "kimi-k1.5",
-        "kimi-k1.5-preview",
-        "kimi-k1.5-long-context",
+        "kimi-k2-thinking",
+        "kimi-k2-thinking-turbo",
     ]
 
     # 所有可用模型列表
     AVAILABLE_MODELS = [
-        "kimi-k1.5",
-        "kimi-k1.5-preview", 
-        "kimi-k1.5-long-context",
+        # Thinking models
+        "kimi-k2-thinking",
+        "kimi-k2-thinking-turbo",
+        # Regular models
+        "kimi-k2.5",
+        "kimi-k2-turbo-preview",
+        "kimi-k2-0711-preview",
+        "kimi-k2-0905-preview",
+        "kimi-latest",
+        # Moonshot v1 series
         "moonshot-v1-128k",
         "moonshot-v1-32k",
         "moonshot-v1-8k",
+        "moonshot-v1-auto",
+        # Vision models
+        "moonshot-v1-8k-vision-preview",
+        "moonshot-v1-32k-vision-preview",
+        "moonshot-v1-128k-vision-preview",
     ]
 
-    def __init__(self, api_key: str = None, model_name: str = "kimi-k1.5"):
+    # 需要 temperature=1 的模型
+    TEMPERATURE_ONE_MODELS = ["kimi-k2.5"]
+
+    def __init__(self, api_key: str = None, model_name: str = "kimi-k2-thinking"):
         super().__init__(api_key, model_name)
-        self.api_url = "https://api.moonshot.cn/v1/chat/completions"
+        self.base_url = "https://api.moonshot.cn/v1"
         self.supports_thinking = model_name in self.THINKING_MODELS
+        self._client = None
 
     def get_api_key(self) -> str:
         """获取Kimi API密钥"""
@@ -478,6 +501,22 @@ class KimiProvider(ModelProvider):
             sys.exit(1)
         self.api_key = api_key
         return api_key
+
+    def _get_client(self):
+        """获取或创建OpenAI SDK客户端"""
+        if self._client is None:
+            if not OPENAI_SDK_AVAILABLE:
+                print("Error: OpenAI SDK not installed. Please install it with:")
+                print("  pip install openai>=1.0.0")
+                sys.exit(1)
+            
+            api_key = self.get_api_key()
+            self._client = OpenAI(
+                api_key=api_key,
+                base_url=self.base_url,
+                timeout=DEFAULT_TIMEOUT,  # 使用7200秒超时
+            )
+        return self._client
 
     def build_request_payload(self, system_prompt: str,
                              question_prompt: str,
@@ -499,140 +538,161 @@ class KimiProvider(ModelProvider):
             for prompt in other_prompts:
                 messages.append({"role": "user", "content": prompt})
 
+        # Prove 任务使用 temperature=1.0 (kimi-k2-thinking 和 kimi-k2.5)
+        # 其他任务使用较低温度
+        if self.model_name in self.TEMPERATURE_ONE_MODELS:
+            temp = 1
+        elif self.supports_thinking and enable_thinking:
+            # Prove 任务: 使用 thinking 时需要 temperature=1.0
+            temp = 1.0
+        else:
+            temp = 0.1
+
         payload = {
             "model": self.model_name,
             "messages": messages,
-            "temperature": 0.3 if enable_thinking and self.supports_thinking else 0.1,
+            "temperature": temp,
         }
 
         # 为支持思考的模型添加思考配置
         if enable_thinking and self.supports_thinking:
-            # kimi-k1.5 系列支持 reasoning_content
+            # kimi-k2-thinking 系列支持 reasoning_content
             payload["extra_body"] = {
                 "enable_thinking": True,
                 "thinking_budget": 32768
             }
 
-        # 添加流式输出配置
-        if streaming and self.streaming_supported:
-            payload["stream"] = True
-
         return payload
 
     def send_api_request(self, payload: Dict, streaming: bool = False,
                          show_thinking: bool = False) -> Dict:
-        """发送Kimi API请求并返回响应"""
-        api_key = self.get_api_key()
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
-        }
-
-        # 流式请求仅在支持时启用
-        use_streaming = streaming and self.streaming_supported
-
-        if use_streaming:
-            payload["stream"] = True
-
-            try:
-                accumulated_text = ""
-                thinking_text = ""
-                thinking_active = False
-
-                with requests.Session() as session:
-                    with session.post(self.api_url, headers=headers,
-                                     json=payload,
-                                     stream=True) as response:
-                        response.raise_for_status()
-
-                        for line in response.iter_lines():
-                            if not line:
-                                continue
-
-                            line_text = line.decode('utf-8')
-                            if not line_text.startswith("data: "):
-                                continue
-
-                            data = line_text[6:]  # 跳过 "data: " 前缀
-
-                            if data == "[DONE]":
-                                break
-
-                            try:
-                                chunk = json.loads(data)
-
-                                # 处理思考内容 (kimi-k1.5 系列)
-                                if "choices" in chunk and chunk["choices"]:
-                                    choice = chunk["choices"][0]
-                                    delta = choice.get("delta", {})
-                                    
-                                    # 提取思考过程
-                                    if "reasoning_content" in delta and delta["reasoning_content"]:
-                                        if show_thinking:
-                                            reasoning_chunk = delta["reasoning_content"]
-                                            thinking_text += reasoning_chunk
-                                            if not thinking_active:
-                                                thinking_active = True
-                                                print("\n--- Thinking Process ---")
-                                            print(reasoning_chunk, end="", flush=True)
-                                    
-                                    # 思考结束，打印分隔线
-                                    if thinking_active and "content" in delta and delta["content"]:
-                                        thinking_active = False
-                                        print("\n--- End of Thinking ---\n")
-                                    
-                                    # 提取文本增量
-                                    if "content" in delta and delta["content"]:
-                                        text_chunk = delta["content"]
-                                        accumulated_text += text_chunk
-                                        # 打印流式输出
-                                        print(text_chunk, end="", flush=True)
-                            except json.JSONDecodeError:
-                                continue
-
-                # 构建类似于非流式响应的对象
-                result = {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": accumulated_text
-                            }
-                        }
-                    ]
-                }
-                if thinking_text:
-                    result["thinking_process"] = thinking_text
-                return result
-
-            except requests.exceptions.RequestException as e:
-                print(f"Error during streaming Kimi API request: {e}")
-                # 出错时回退到非流式请求
-                payload["stream"] = False
-
-        # 非流式请求
+        """使用OpenAI SDK发送Kimi API请求并返回响应"""
+        client = self._get_client()
+        
+        # 提取参数
+        model = payload.get("model", self.model_name)
+        messages = payload.get("messages", [])
+        temperature = payload.get("temperature", 0.3)
+        extra_body = payload.get("extra_body", {})
+        
         try:
-            if "stream" in payload:
-                payload.pop("stream")
-
-            response = requests.post(self.api_url, headers=headers,
-                                    json=payload,
-                                    timeout=DEFAULT_TIMEOUT)
-            response.raise_for_status()
-            result = response.json()
-            
-            # 对于支持思考的模型，尝试提取思考过程
-            if self.supports_thinking and "choices" in result and result["choices"]:
-                message = result["choices"][0].get("message", {})
-                if "reasoning_content" in message:
-                    result["thinking_process"] = message["reasoning_content"]
-            
-            return result
-        except requests.exceptions.RequestException as e:
+            if streaming and self.streaming_supported:
+                # 流式请求
+                return self._send_streaming_request(
+                    client, model, messages, temperature, extra_body, show_thinking
+                )
+            else:
+                # 非流式请求
+                return self._send_non_streaming_request(
+                    client, model, messages, temperature, extra_body
+                )
+        except Exception as e:
             print(f"Error during Kimi API request: {e}")
-            if hasattr(e, 'response') and e.response:
-                print(f"Status code: {e.response.status_code}")
-                print(f"Raw API Response: {e.response.text[:200]}")
             raise e
+
+    def _send_streaming_request(self, client, model: str, messages: List[Dict],
+                                 temperature: float, extra_body: Dict,
+                                 show_thinking: bool) -> Dict:
+        """发送流式请求"""
+        accumulated_text = ""
+        thinking_text = ""
+        thinking_active = False
+        
+        # 构建请求参数
+        request_params = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+            "timeout": DEFAULT_TIMEOUT,  # 添加超时设置
+        }
+        
+        # 添加 extra_body（用于 thinking 配置）
+        if extra_body:
+            request_params["extra_body"] = extra_body
+        
+        stream = client.chat.completions.create(**request_params)
+        
+        for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            
+            if delta is None:
+                continue
+            
+            # 提取思考过程 (reasoning_content)
+            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                if show_thinking:
+                    reasoning_chunk = delta.reasoning_content
+                    thinking_text += reasoning_chunk
+                    if not thinking_active:
+                        thinking_active = True
+                        print("\n--- Thinking Process ---")
+                    print(reasoning_chunk, end="", flush=True)
+            
+            # 思考结束，打印分隔线
+            if thinking_active and hasattr(delta, 'content') and delta.content:
+                thinking_active = False
+                print("\n--- End of Thinking ---\n")
+            
+            # 提取文本增量
+            if hasattr(delta, 'content') and delta.content:
+                text_chunk = delta.content
+                accumulated_text += text_chunk
+                # 打印流式输出
+                print(text_chunk, end="", flush=True)
+        
+        # 构建响应对象
+        result = {
+            "choices": [
+                {
+                    "message": {
+                        "content": accumulated_text
+                    }
+                }
+            ]
+        }
+        if thinking_text:
+            result["thinking_process"] = thinking_text
+        return result
+
+    def _send_non_streaming_request(self, client, model: str, messages: List[Dict],
+                                     temperature: float, extra_body: Dict) -> Dict:
+        """发送非流式请求"""
+        # 构建请求参数
+        request_params = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "timeout": DEFAULT_TIMEOUT,  # 添加超时设置
+        }
+        
+        # 添加 extra_body（用于 thinking 配置）
+        if extra_body:
+            request_params["extra_body"] = extra_body
+        
+        response = client.chat.completions.create(**request_params)
+        
+        # 提取响应内容
+        content = response.choices[0].message.content if response.choices else ""
+        
+        # 构建响应对象
+        result = {
+            "choices": [
+                {
+                    "message": {
+                        "content": content
+                    }
+                }
+            ]
+        }
+        
+        # 提取思考过程（如果有）
+        if self.supports_thinking and response.choices:
+            message = response.choices[0].message
+            if hasattr(message, 'reasoning_content') and message.reasoning_content:
+                result["thinking_process"] = message.reasoning_content
+        
+        return result
 
     def extract_text_from_response(self, response_data: Dict) -> Tuple[str, str]:
         """从Kimi API响应中提取文本和思考过程"""
@@ -652,6 +712,11 @@ class KimiProvider(ModelProvider):
     def check_capabilities(self) -> bool:
         """检查Kimi模型是否支持流式输出"""
         # Kimi支持流式输出
+        if not OPENAI_SDK_AVAILABLE:
+            print("Warning: OpenAI SDK not available. Kimi streaming disabled.")
+            self.streaming_supported = False
+            return False
+        
         self.streaming_supported = True
         return True
 
@@ -681,8 +746,8 @@ def create_provider(provider_name: str = None, api_key: str = None, model_name: 
     elif provider_name in ["openai", "gpt", "openai-api"]:
         return OpenAIProvider(api_key, model_name or "gpt-4o")
     elif provider_name in ["kimi", "moonshot", "kimi-api"]:
-        # 默认使用支持思考的 kimi-k1.5 模型
-        return KimiProvider(api_key, model_name or "kimi-k1.5")
+        # 默认使用支持思考的 kimi-k2-thinking 模型
+        return KimiProvider(api_key, model_name or "kimi-k2-thinking")
     else:
         print(f"Unknown provider: {provider_name}, using Gemini as default")
         return GeminiProvider(api_key, model_name or "gemini-2.5-pro")

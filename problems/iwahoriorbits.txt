@@ -1,0 +1,19 @@
+*** Problem Statement ***
+
+
+# Classification of Iwahori orbits on \(V\)
+
+## Setup
+
+Let \(F\) be a non-archimedean local field with ring of integers \(\mathfrak{O}\) and uniformizer \(\varpi\). Let \(V\)  be finite-dimensional vector spaces over \(F\) with dimension $n$ and standard basis \(e_1, ..., e_n\). Fix the Iwahori subgroup I$ consists of elements sending $e_i$ to the lattice $\sum_{j<= i} \mathfrak{O}e_j + \sum_{j>i}\varphi \mathfrak{O} e_j$
+
+
+**Classify the orbits of the Iwahori action on \(V\).**
+
+That is, describe a complete set of representatives for the orbit space
+\[
+I  \backslash V 
+\]
+in terms of some combinatorial data
+
+

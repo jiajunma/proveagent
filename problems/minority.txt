@@ -1,0 +1,10 @@
+*** Problem Statement ***
+
+The Minority Game
+
+Consider a symmetric game with three players. Each player must simultaneously choose one of two rooms: Room A or Room B.The Payoff Rule:A player wins $1$ if they are the only person in their chosen room. If more than one person chooses the same room, all players in that room receive a payoff of $0$.
+
+
+Problem
+1. Compute all Pure Nash Equilibria. 
+2. Compute all mixed Nash Equilibria.  

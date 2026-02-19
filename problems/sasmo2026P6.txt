@@ -1,0 +1,3 @@
+*** Problem Statement ***
+
+Jason randomly placed digits 1, 2, 3, ... , 9 around a circle. When he read clockwise three consecutive digits, he got a three-digit whole number. If there are 9 such three-digit numbers, find the sum of the 9 numbers. 

@@ -157,20 +157,19 @@ class OpenAIClient(ModelProviderClient):
 class KimiClient(ModelProviderClient):
     """Convenience client for Kimi API."""
     
-    # Thinking-capable models
+    # Thinking-capable models (return reasoning_content)
     THINKING_MODELS = [
-        "kimi-k1.5",
-        "kimi-k1.5-preview",
-        "kimi-k1.5-long-context",
+        "kimi-k2-thinking",
+        "kimi-k2-thinking-turbo",
     ]
     
-    def __init__(self, api_key: Optional[str] = None, model_name: str = "kimi-k1.5"):
+    def __init__(self, api_key: Optional[str] = None, model_name: str = "kimi-k2-thinking"):
         """
         Initialize Kimi client.
         
         Args:
             api_key: API key (uses KIMI_API_KEY env var if not provided)
-            model_name: Model name to use (default: kimi-k1.5 with thinking)
+            model_name: Model name to use (default: kimi-k2-thinking with thinking)
         """
         if not api_key:
             api_key = os.getenv("KIMI_API_KEY")
@@ -212,7 +211,7 @@ def create_client(provider_name: str,
         return OpenAIClient(api_key, model)
     
     elif provider_name in ["kimi", "moonshot"]:
-        model = model_name or "kimi-k1.5"
+        model = model_name or "kimi-k2-thinking"
         return KimiClient(api_key, model)
     
     else:

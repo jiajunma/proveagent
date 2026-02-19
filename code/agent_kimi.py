@@ -45,7 +45,7 @@ except ImportError:
     import utils
 
 # Configuration - Default to thinking-capable model
-MODEL_NAME = "kimi-k1.5"
+MODEL_NAME = "kimi-k2-thinking"
 
 # Re-export utility functions for backwards compatibility
 set_log_file = utils.set_log_file
@@ -133,7 +133,7 @@ def main():
     """Main entry point for command-line usage."""
     parser = argparse.ArgumentParser(description="Kimi Agent for IMO problem solving")
     parser.add_argument("problem_file", help="Path to the problem file")
-    parser.add_argument("--model", default="kimi-k1.5", help="Model name to use")
+    parser.add_argument("--model", default="kimi-k2-thinking", help="Model name to use (default: kimi-k2-thinking)")
     parser.add_argument("--memory", help="Memory file to resume from")
     parser.add_argument("--no-streaming", action="store_true", help="Disable streaming")
     parser.add_argument("--no-thinking", action="store_true", help="Hide thinking process")

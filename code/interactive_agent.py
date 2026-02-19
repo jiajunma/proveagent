@@ -75,11 +75,11 @@ import agent as agent_module
 from res2md import memory_to_tex as res2md_memory_to_tex
 
 # --- Fast models for cheap tex composition/fixing (per provider) ---
-# For kimi: no fast/cheap model, use current model with thinking disabled
+# For kimi: use kimi-k2.5 without thinking
 FAST_MODELS = {
     "gemini": "gemini-2.5-flash-lite",
     "openai": "gpt-4o-mini",
-    "kimi": None,  # Use current model with thinking disabled
+    "kimi": "kimi-k2.5",  # Use kimi-k2.5 without thinking for LaTeX tasks
 }
 
 # Legacy constants for backward compatibility
@@ -101,6 +101,7 @@ Requirements:
 - Preserve all mathematical content exactly; use $...$ for inline math, \\[...\\] for display math
 - Convert markdown **bold** to \\textbf{}, ### sections to \\section{}, etc.
 - Output ONLY the complete LaTeX source, no explanations
+- Keep it concise but complete
 
 Structure:
 1. Problem Statement
@@ -127,11 +128,12 @@ TEX_FIX_TEMPLATE = """Fix the LaTeX compilation errors. Output ONLY the correcte
 """
 
 
-def call_fast_model(prompt: str, api_key: str, provider: str = "gemini", 
-                    model_name: str = None, enable_thinking: bool = True, timeout: int = 60) -> str:
+def call_fast_model(prompt: str, api_key: str, provider: str = "gemini",
+                    model_name: str = None, enable_thinking: bool = True, timeout: int = 300) -> str:
     """Call the fast/cheap model for the specified provider.
-    
+
     For kimi: if model_name is provided, use it with thinking disabled (for LaTeX tasks).
+    Default timeout increased to 300 seconds (5 minutes) to handle longer processing times, especially for LaTeX generation.
     """
     provider = provider.lower()
     
@@ -161,22 +163,32 @@ def call_fast_model(prompt: str, api_key: str, provider: str = "gemini",
         return resp.json()["choices"][0]["message"]["content"]
     
     elif provider == "kimi":
-        # For kimi: use provided model_name (e.g., kimi-k2) or fallback to a default
+        # For kimi: use provided model_name or fallback to kimi-k2.5
         # For LaTeX tasks, thinking is disabled by default
-        model = model_name or "kimi-k2"  # Default to kimi-k2 if no model specified
+        model = model_name or FAST_MODELS.get("kimi", "kimi-k2.5")  # Default: kimi-k2.5 without thinking
         api_url = "https://api.moonshot.cn/v1/chat/completions"
+
+        # kimi-k2.5 requires temperature=1.0
+        # For LaTeX tasks (kimi-k2.5), use temperature=1.0
+        temp = 1.0 if model == "kimi-k2.5" else 0.3
+
+        # For LaTeX generation, we need a longer timeout (600 seconds)
+        # Check if this is a LaTeX task by looking for LaTeX-specific content in the prompt
+        latex_task = any(marker in prompt for marker in ["LaTeX", "latex", "\\documentclass", "\\begin{document}"])
+        kimi_timeout = 600 if latex_task else timeout
+
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.0,
+            "temperature": temp,
         }
-        # For kimi-k2 or kimi-k1.5, disable thinking when enable_thinking is False
-        if not enable_thinking:
+        # For kimi-k2-thinking, disable thinking when enable_thinking is False
+        if not enable_thinking and "thinking" in model:
             payload["extra_body"] = {
                 "enable_thinking": False
             }
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=timeout)
+        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=kimi_timeout)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
     
@@ -186,9 +198,9 @@ def call_fast_model(prompt: str, api_key: str, provider: str = "gemini",
 
 
 # Backward compatibility alias
-def call_flash(prompt: str, api_key: str, timeout: int = 60) -> str:
+def call_flash(prompt: str, api_key: str, timeout: int = 300) -> str:
     """Legacy function, defaults to Gemini flash model."""
-    return call_fast_model(prompt, api_key, "gemini", timeout)
+    return call_fast_model(prompt, api_key, "gemini", None, True, timeout)
 
 
 def call_fast_model_chat(
@@ -198,7 +210,7 @@ def call_fast_model_chat(
     provider: str = "gemini",
     model_name: str = None,
     enable_thinking: bool = True,
-    timeout: int = 60,
+    timeout: int = 300,
 ) -> str:
     """Multi-turn chat with fast model. 
     contents format for gemini: [{"role":"user","parts":[{"text":"..."}]}, ...]
@@ -253,7 +265,7 @@ def call_fast_model_chat(
         messages = []
         if system_prompt.strip():
             messages.append({"role": "system", "content": system_prompt})
-        
+
         for item in contents:
             role = item.get("role", "user")
             # Handle Gemini format: parts[0].text
@@ -262,23 +274,37 @@ def call_fast_model_chat(
             else:
                 content = item.get("content", "")
             messages.append({"role": role, "content": content})
-        
-        # For kimi: use provided model_name (e.g., kimi-k2) or fallback
+
+        # For kimi: use provided model_name or fallback to kimi-k2.5
         # For LaTeX tasks, thinking is disabled by default
-        model = model_name or "kimi-k2"
+        model = model_name or FAST_MODELS.get("kimi", "kimi-k2.5")
         api_url = "https://api.moonshot.cn/v1/chat/completions"
+
+        # kimi-k2.5 requires temperature=1.0
+        temp = 1.0 if model == "kimi-k2.5" else 0.3
+
+        # Check if this might be a LaTeX task by looking at system_prompt or first user message
+        latex_task = False
+        if system_prompt and any(marker in system_prompt for marker in ["LaTeX", "latex", "\\documentclass", "\\begin{document}"]):
+            latex_task = True
+        elif messages and any(any(marker in msg.get("content", "") for marker in ["LaTeX", "latex", "\\documentclass", "\\begin{document}"]) for msg in messages):
+            latex_task = True
+
+        # For LaTeX generation, use a longer timeout
+        kimi_timeout = 600 if latex_task else timeout
+
         payload = {
             "model": model,
             "messages": messages,
-            "temperature": 0.3,
+            "temperature": temp,
         }
-        # For kimi-k2 or kimi-k1.5, disable thinking when enable_thinking is False
-        if not enable_thinking:
+        # For kimi-k2-thinking, disable thinking when enable_thinking is False
+        if not enable_thinking and "thinking" in model:
             payload["extra_body"] = {
                 "enable_thinking": False
             }
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=timeout)
+        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=kimi_timeout)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
     
@@ -292,7 +318,7 @@ def call_flash_chat(
     system_prompt: str,
     contents: list,
     api_key: str,
-    timeout: int = 60,
+    timeout: int = 300,
 ) -> str:
     """Legacy function, defaults to Gemini flash model."""
     return call_fast_model_chat(system_prompt, contents, api_key, "gemini", None, True, timeout)
@@ -323,17 +349,24 @@ def compose_tex_with_fast_model(problem: str, solution: str, verification: str, 
                                  provider: str = "gemini", model_name: str = None) -> str:
     """Compose LaTeX using the provider's fast/cheap model.
     
-    For kimi: uses the current model with thinking disabled (no fast/cheap model available).
+    For kimi: uses kimi-k2.5 without thinking (FAST_MODELS['kimi']).
     """
     prompt = TEX_COMPOSE_TEMPLATE.replace("<<<PROBLEM>>>", problem)
     prompt = prompt.replace("<<<SOLUTION>>>", solution or "(No solution yet)")
     prompt = prompt.replace("<<<VERIFICATION>>>", verification or "(No verification yet)")
     
     # For kimi, disable thinking for LaTeX tasks (no fast model, but thinking disabled)
-    if provider.lower() == "kimi":
-        out = call_fast_model(prompt, api_key, provider, model_name, enable_thinking=False)
-    else:
-        out = call_fast_model(prompt, api_key, provider, model_name)
+    # Use a longer timeout for LaTeX tasks, especially for Kimi
+    try:
+        if provider.lower() == "kimi":
+            # Use a longer timeout (600 seconds / 10 minutes) for Kimi LaTeX tasks
+            out = call_fast_model(prompt, api_key, provider, model_name, enable_thinking=False, timeout=600)
+        else:
+            # For other providers, use the default timeout (now 300 seconds)
+            out = call_fast_model(prompt, api_key, provider, model_name)
+    except Exception as e:
+        # If fast model fails (e.g., API error), raise with more context
+        raise RuntimeError(f"Fast model failed for {provider}: {e}") from e
     
     latex = _extract_latex(out)
     if "\\documentclass" in latex:
@@ -343,30 +376,33 @@ def compose_tex_with_fast_model(problem: str, solution: str, verification: str, 
     return TEX_PREAMBLE + "\n\\begin{document}\n\n" + latex + "\n\n\\end{document}\n"
 
 
-def fix_tex_with_fast_model(latex: str, error: str, api_key: str, 
-                            provider: str = "gemini", model_name: str = None) -> str:
+def fix_tex_with_fast_model(latex: str, error: str, api_key: str,
+                            provider: str = "gemini", model_name: str = None,
+                            timeout: int = 300) -> str:
     """Fix LaTeX errors using the provider's fast/cheap model.
-    
-    For kimi: uses the current model with thinking disabled (no fast/cheap model available).
+
+    For kimi: uses kimi-k2.5 without thinking (FAST_MODELS['kimi']).
+    Default timeout increased to 300 seconds (5 minutes) to handle longer processing times.
     """
     prompt = TEX_FIX_TEMPLATE.replace("<<<ERROR>>>", error).replace("<<<LATEX>>>", latex)
     
     # For kimi, disable thinking for LaTeX tasks (no fast model, but thinking disabled)
     if provider.lower() == "kimi":
-        return _extract_latex(call_fast_model(prompt, api_key, provider, model_name, enable_thinking=False))
+        # Use a longer timeout (600 seconds / 10 minutes) for Kimi LaTeX tasks
+        return _extract_latex(call_fast_model(prompt, api_key, provider, model_name, enable_thinking=False, timeout=600))
     else:
-        return _extract_latex(call_fast_model(prompt, api_key, provider, model_name))
+        return _extract_latex(call_fast_model(prompt, api_key, provider, model_name, timeout=timeout))
 
 
 # Backward compatibility aliases
-def compose_tex_with_flash(problem: str, solution: str, verification: str, api_key: str) -> str:
-    """Legacy function, defaults to Gemini flash model."""
-    return compose_tex_with_fast_model(problem, solution, verification, api_key, "gemini")
+def compose_tex_with_flash(problem: str, solution: str, verification: str, api_key: str, timeout: int = 300) -> str:
+    """Legacy function, defaults to Gemini flash model with increased timeout."""
+    return compose_tex_with_fast_model(problem, solution, verification, api_key, "gemini", None)
 
 
-def fix_tex_with_flash(latex: str, error: str, api_key: str) -> str:
+def fix_tex_with_flash(latex: str, error: str, api_key: str, timeout: int = 300) -> str:
     """Legacy function, defaults to Gemini flash model."""
-    return fix_tex_with_fast_model(latex, error, api_key, "gemini")
+    return fix_tex_with_fast_model(latex, error, api_key, "gemini", None, timeout)
 
 
 def compile_latex(tex_path: str, work_dir: str) -> Tuple[bool, str]:
@@ -465,7 +501,7 @@ def export_to_pdf(
 ) -> bool:
     """Export solution to PDF using the provider's fast model for LaTeX composition.
     
-    For kimi: no fast model available, uses current model with thinking disabled.
+    For kimi: uses kimi-k2.5 without thinking for LaTeX tasks.
     If PDF generation fails, automatically falls back to Markdown export.
     """
     tex_name = f"{base_name}-temp.tex"
@@ -488,18 +524,20 @@ def export_to_pdf(
     fast_model = FAST_MODELS.get(provider_lower)
     
     if provider_lower == "kimi":
-        # For kimi: no fast model, use current model with thinking disabled
-        display_model = model_name or "kimi-k2"
-        print(f"  Composing LaTeX using {provider} ({display_model}, thinking disabled)...")
+        # For kimi: force use kimi-k2.5 without thinking for LaTeX tasks
+        # Ignore the passed model_name (which may be kimi-k2-thinking for prove)
+        latex_model = fast_model or "kimi-k2.5"
+        print(f"  Composing LaTeX using {provider} ({latex_model}, no thinking)...")
     else:
         # For other providers: use fast/cheap model
-        display_model = fast_model or model_name or "default"
-        print(f"  Composing LaTeX using {provider}'s fast model ({display_model})...")
+        latex_model = fast_model or model_name or "default"
+        print(f"  Composing LaTeX using {provider}'s fast model ({latex_model})...")
 
     skip_fast_fix = False
+    latex = None
     try:
         latex = compose_tex_with_fast_model(problem, solution, verification or "Verification pending.", 
-                                             api_key, provider, model_name)
+                                             api_key, provider, latex_model)
     except Exception as e:
         print(f"  Fast model failed ({e}), using res2md fallback...")
         skip_fast_fix = True
@@ -519,6 +557,14 @@ def export_to_pdf(
                 )
         finally:
             os.unlink(tmp)
+    
+    # If we still don't have valid LaTeX, skip to Markdown export
+    if not latex or not isinstance(latex, str):
+        print("  Could not generate LaTeX content.")
+        print("  Falling back to Markdown export...")
+        md_path = export_to_md(problem, solution, verification, output_dir, base_name)
+        print(f"  ✓ Markdown: {md_path}")
+        return False
 
     if "\\begin{document}" not in latex:
         latex = latex.rstrip() + "\n\n\\begin{document}\n\n\\end{document}\n"
@@ -537,7 +583,7 @@ def export_to_pdf(
         print(f"  Compile attempt {attempt + 1}/{max_attempts} failed")
         if attempt < max_attempts - 1 and not skip_fast_fix:
             try:
-                latex = fix_tex_with_fast_model(latex, err_snippet, api_key, provider, model_name)
+                latex = fix_tex_with_fast_model(latex, err_snippet, api_key, provider, latex_model)
             except Exception as e:
                 print(f"  Fast model fix failed: {e}")
                 break
@@ -720,7 +766,7 @@ def main():
 
     # API provider selection options
     parser.add_argument("--provider", "-p", choices=["gemini", "openai", "kimi"],
-                       help="Select API provider (gemini, openai, kimi). Kimi provider uses kimi-k1.5 by default for thinking capability.")
+                       help="Select API provider (gemini, openai, kimi). Kimi provider uses kimi-k2-thinking by default for thinking capability.")
     parser.add_argument("--model", "-m", type=str,
                        help="Specify model name for the selected provider")
     parser.add_argument("--list-providers", action="store_true",
@@ -1029,8 +1075,10 @@ def main():
                 full_verification = mem.get("full_verification", mem.get("verify", ""))
 
     # Banner
+    from datetime import datetime
     print()
-    print("  IMO Interactive Agent")
+    print("  IMO Interactive Agent v1.0")
+    print(f"  Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("  Type /help for commands.")
     if not problem_statement:
         print("  No problem loaded. Type to chat with agent, or /edit to draft, /load or /problem to load.")
@@ -1340,13 +1388,15 @@ def main():
                         print("  Available models: gpt-4o, gpt-4-turbo, gpt-3.5-turbo, ...")
                     elif provider_name == "kimi":
                         print("  Available models:")
-                        print("    - kimi-k1.5 (default, with thinking)")
-                        print("    - kimi-k1.5-preview (with thinking)")
-                        print("    - kimi-k1.5-long-context (with thinking)")
-                        print("    - moonshot-v1-128k (no thinking)")
-                        print("    - moonshot-v1-32k (no thinking)")
-                        print("    - moonshot-v1-8k (no thinking)")
-                        print("  Note: Use kimi-k1.5 series for thinking capability")
+                        print("    - kimi-k2-thinking (default, with thinking)")
+                        print("    - kimi-k2-thinking-turbo (with thinking)")
+                        print("    - kimi-k2.5 (high quality, temp=1 only)")
+                        print("    - kimi-k2-turbo-preview")
+                        print("    - kimi-latest")
+                        print("    - moonshot-v1-128k")
+                        print("    - moonshot-v1-32k")
+                        print("    - moonshot-v1-8k")
+                        print("  Note: Use kimi-k2-thinking series for thinking capability")
                 else:
                     model_name = rest
                     print(f"  Model set to: {model_name}")
