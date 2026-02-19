@@ -1,0 +1,35 @@
+*** Problem Statement ***
+
+
+Classification of bi-Iwahori orbits on \(M_{n \times m}(F)\)
+
+Setup
+
+Let \(F\) be a non-archimedean local field with ring of integers \(\mathcal{O}\) and uniformizer \(\varphi\). Let \(n, m \geq 1\) be integers. The *Iwahori subgroup* \(I \subset \mathrm{GL}_n(F)\) is defined as the set of invertible \(n \times n\) matrices \(g = (g_{ij})\) such that:
+\[
+\mathrm{val}(g_{ij}) \geq 0 \;\; \text{for } i \leq j \quad \text{and} \quad \mathrm{val}(g_{ij}) \geq 1 \;\; \text{for } i > j.
+\]
+Similarly, the Iwahori subgroup \(I' \subset \mathrm{GL}_m(F)\) consists of invertible \(m \times m\) matrices with the same valuation conditions.
+
+The groups \(\mathrm{GL}_n(F)\) and \(\mathrm{GL}_m(F)\) act on the space of \(n \times m\) matrices \(M_{n \times m}(F)\) by
+\[
+(g,h) \cdot M = g M h^{-1}
+\quad \text{for } g \in \mathrm{GL}_n(F),\; h \in \mathrm{GL}_m(F),\; M \in M_{n \times m}(F).
+\]
+Restricting to the Iwahori subgroups, we obtain the *bi-Iwahori action* of \(I \times I'\) on \(M_{n \times m}(F)\).
+
+Let \(E_{ij}\) denote the elementary matrix with \(1\) at position \((i,j)\) and \(0\) elsewhere.
+
+A *\(\mathbb{Z}\)-colored partial matching* is a subset \(\sigma \subseteq [n] \times [m] \times \mathbb{Z}\) such that each row index \(i \in [n]\) appears in at most one triple of \(\sigma\), and each column index \(j \in [m]\) appears in at most one triple of \(\sigma\). Equivalently, the pairs \((i,j)\) occurring in \(\sigma\) form a partial matching between \([n]\) and \([m]\).
+
+For such \(\sigma\), define
+\[
+E_\sigma := \sum_{(i,j,v) \in \sigma} \varphi^v E_{ij}.
+\]
+(Here \([n] := \{1, \ldots, n\}\) and \([m] := \{1, \ldots, m\}\).)
+
+**Goal:** Prove that the bi-Iwahori orbits on \(M_{n \times m}(F)\) are classified by \(\mathbb{Z}\)-colored partial matchings. Precisely:
+1. *Surjectivity:* Every matrix in \(M_{n \times m}(F)\) lies in the orbit of \(E_\sigma\) for some \(\mathbb{Z}\)-colored partial matching \(\sigma\).
+2. *Distinctness:* For \(\mathbb{Z}\)-colored partial matchings \(\sigma\) and \(\tau\), the matrices \(E_\sigma\) and \(E_\tau\) lie in the same orbit if and only if \(\sigma = \tau\).
+
+
