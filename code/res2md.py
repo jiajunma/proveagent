@@ -52,8 +52,8 @@ def markdown_to_latex(text: str) -> str:
     while i < len(lines):
         line = lines[i]
 
-        # Section: ### X ###
-        section_match = re.match(r"^###\s*(.+?)\s*###\s*$", line.strip())
+        # Section: ### X ### or ### X (but not ####)
+        section_match = re.match(r"^###(?!#)\s*(.+?)\s*(?:###)?\s*$", line.strip())
         if section_match:
             if in_itemize:
                 result.append("\\end{itemize}\n")
@@ -63,6 +63,34 @@ def markdown_to_latex(text: str) -> str:
                 in_enumerate = False
             title = section_match.group(1).strip()
             result.append(f"\\section{{{title}}}\n\n")
+            i += 1
+            continue
+
+        # Subsection: ## X ## or ## X (but not ### or ####)
+        subsection_match2 = re.match(r"^##(?!#)\s*(.+?)\s*(?:##)?\s*$", line.strip())
+        if subsection_match2:
+            if in_itemize:
+                result.append("\\end{itemize}\n")
+                in_itemize = False
+            if in_enumerate:
+                result.append("\\end{enumerate}\n")
+                in_enumerate = False
+            title = subsection_match2.group(1).strip()
+            result.append(f"\\subsection{{{title}}}\n\n")
+            i += 1
+            continue
+
+        # Subsubsection: #### X #### or #### X
+        subsubsection_match = re.match(r"^####\s*(.+?)\s*(?:####)?\s*$", line.strip())
+        if subsubsection_match:
+            if in_itemize:
+                result.append("\\end{itemize}\n")
+                in_itemize = False
+            if in_enumerate:
+                result.append("\\end{enumerate}\n")
+                in_enumerate = False
+            title = subsubsection_match.group(1).strip()
+            result.append(f"\\subsubsection{{{title}}}\n\n")
             i += 1
             continue
 

@@ -421,6 +421,16 @@ def export_to_pdf(
     tex_path = os.path.join(output_dir, tex_name)
     pdf_path = os.path.join(output_dir, f"{base_name}-temp.pdf")
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Clean up previous generated files
+    temp_extensions = ['.pdf', '.aux', '.log', '.out', '.toc', '.synctex.gz', '.fdb_latexmk', '.fls']  # Note: .log is LaTeX log, not proof log
+    for ext in temp_extensions:
+        old_file = os.path.join(output_dir, f"{base_name}-temp{ext}")
+        if os.path.exists(old_file):
+            try:
+                os.remove(old_file)
+            except OSError:
+                pass  # Ignore errors if file is locked
 
     # Get the model name for display
     provider_lower = provider.lower()
@@ -525,7 +535,7 @@ def _agent_worker(
         print(f"  [iter {_iter}] Exporting PDF...")
         export_to_pdf(prob, sol, verif, log_dir, base_name, api_key, provider=provider_name, model_name=model_name)
 
-    log_path = os.path.join(log_dir, f"{base_name}_interactive.log")
+    log_path = os.path.join(log_dir, f"{base_name}_interactive.prooflog")
     ag.set_log_file(log_path)
 
     try:
@@ -830,7 +840,7 @@ def main():
 
     # 获取API密钥
     api_key = model_provider.get_api_key()
-    log_path = os.path.join(log_dir, f"{base_name}_interactive.log")
+    log_path = os.path.join(log_dir, f"{base_name}_interactive.prooflog")
     agent_module.set_log_file(log_path)
 
     # 检查模型能力
