@@ -15,6 +15,7 @@ Copyright (c) 2026 Ma Jia-Jun
 ## What's New in This Fork
 
 - **`code/interactive_agent.py`**: An interactive Claude Code–style REPL for solving math problems with slash commands, multi-provider support, and PDF export.
+- **Partial solution import**: Load a LaTeX file as a starting point — the agent extracts and organizes a partial solution, then continues proving from there (skipping the initial exploration phase). Auto-generates a PDF on load.
 - **Kimi API support**: Added `code/agent_kimi.py` and `KimiProvider` in `code/model_providers.py`, supporting `kimi-k2-thinking` and other Kimi/Moonshot models.
 - **Beyond IMO**: The agent works on any competition or research-level math problem — not just IMO. Drop any problem statement into a `.txt` file and run.
 
@@ -53,6 +54,9 @@ python code/interactive_agent.py run_logs/imo01.mem
 python code/interactive_agent.py --problem problems/imo01.txt
 python code/interactive_agent.py --mem run_logs/imo01.mem
 
+# Load a LaTeX file as partial solution (requires a problem)
+python code/interactive_agent.py --problem problems/imo01.txt --partial my_draft.tex
+
 # Select API provider and model
 python code/interactive_agent.py --provider kimi --model kimi-k2-thinking problems/imo01.txt
 python code/interactive_agent.py --provider gemini --model gemini-2.5-pro problems/imo01.txt
@@ -77,6 +81,7 @@ python code/interactive_agent.py --list-providers
 | `path` | | Problem file or `.mem` memory file to load at startup |
 | `--problem FILE` | `-f` | Explicitly load a problem file |
 | `--mem FILE` | | Explicitly load a `.mem` memory file to resume |
+| `--partial FILE` | | Load a LaTeX file as partial solution (requires `--problem` or `path`) |
 | `--provider NAME` | `-p` | API provider: `gemini`, `openai`, `kimi` |
 | `--model NAME` | `-m` | Model name for the selected provider |
 | `--log-dir DIR` | `-d` | Directory for logs and memory files (default: `run_logs`) |
@@ -95,6 +100,7 @@ Once running, use slash commands to control the session:
 | `/run` | `/r` | Run the agent on the current problem |
 | `/problem <path>` | | Load a problem file |
 | `/load <path>` | | Load a `.mem` memory file to resume a session |
+| `/partial <path>` | | Load a LaTeX file as partial solution starting point |
 | `/edit` | | Draft or refine the problem statement interactively with the agent |
 | `/edit_existing` | | Browse and edit an existing problem file |
 | `/done` | | Save the current draft as the problem (while in edit mode) |
@@ -129,6 +135,7 @@ $ python code/interactive_agent.py --provider kimi problems/imo01.txt
   [prob:imo01 | kimi/kimi-k2-thinking | stream:on think:on]
   > /run
   ... (agent solves the problem with streaming output) ...
+  ... (PDF auto-generated after each iteration) ...
 
   > Here's an alternative approach using generating functions
   > /run
@@ -139,6 +146,39 @@ $ python code/interactive_agent.py --provider kimi problems/imo01.txt
 
   > /quit
 ```
+
+**Starting from a partial solution (e.g. hand-written LaTeX draft):**
+
+```
+$ python code/interactive_agent.py --problem problems/imo01.txt --partial my_draft.tex
+
+  Extracting partial solution from my_draft.tex...
+  Partial solution loaded (2345 chars). Use /run to continue.
+  Auto-generating PDF for partial solution...
+  ✓ PDF: run_logs/imo01-temp.pdf
+
+  > /run
+  ... (agent continues from the partial solution, skipping initial exploration) ...
+```
+
+Or interactively:
+
+```
+  > /problem problems/imo01.txt
+  > /partial my_draft.tex
+  ... (extracts partial solution, auto-generates PDF) ...
+  > /run
+```
+
+### Auto PDF generation
+
+A PDF is automatically generated whenever a problem with a solution is loaded or produced:
+
+- Loading a problem or memory file that already contains a solution
+- Extracting a partial solution via `/partial` or `--partial`
+- Each iteration during `/run` (via the agent callback)
+
+The PDF is compiled with `pdflatex` and opened automatically. If compilation fails, a Markdown fallback is exported instead.
 
 ### Memory files
 
