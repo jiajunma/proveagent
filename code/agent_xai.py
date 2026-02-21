@@ -176,6 +176,7 @@ def set_model(model_name: str):
 
 def agent(problem_statement: str,
           other_prompts: Optional[list] = None,
+          verify_prompts: Optional[list] = None,
           memory_file: Optional[str] = None,
           resume_from_memory: bool = False,
           on_iteration_result: Optional[Callable] = None,
@@ -218,6 +219,7 @@ def agent(problem_statement: str,
     return engine.run(
         problem_statement=problem_statement,
         other_prompts=other_prompts or [],
+        verify_prompts=verify_prompts or [],
         resume=resume_from_memory,
         streaming=streaming,
         show_thinking=show_thinking

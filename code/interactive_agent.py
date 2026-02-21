@@ -26,9 +26,10 @@ try:
     # Slash-command completions
     _READLINE_COMMANDS = [
         "/run", "/r", "/load", "/problem", "/prompt", "/add", "/p",
-        "/partial",
+        "/partial", "/comment", "/c", "/pcomment", "/vcomment",
+        "/comments", "/del_comment", "/clear_comments",
         "/export", "/e", "/status", "/s", "/list", "/l", "/clear",
-        "/edit", "/edit_problem", "/done", "/edit_existing", "/save_as",
+        "/analyze", "/edit", "/edit_problem", "/done", "/edit_existing", "/save_as",
         "/streaming", "/thinking", "/interactive", "/run_mode", "/quota",
         "/provider", "/model", "/providers",
         "/help", "/h", "/quit", "/q", "/exit",
@@ -364,6 +365,36 @@ Present the rigorous parts of the solution in a clean, step-by-step format:
 <<<LATEX>>>
 """
 
+PROBLEM_ANALYSIS_PROMPT = """You are an expert mathematician. Analyze the following mathematical problem statement for quality, completeness, and well-definedness.
+
+Check for the following issues:
+
+1. **Undefined terms**: Are all mathematical objects, sets, or structures clearly defined? (e.g., does it say "for all $n$" without specifying $n \\in \\mathbb{Z}^+$?)
+2. **Ambiguity**: Is the problem statement unambiguous? Could it be interpreted in multiple ways?
+3. **Missing constraints**: Are there necessary constraints or conditions that are missing? (e.g., boundedness, finiteness, positivity)
+4. **Goal clarity**: Is it clear what needs to be proved, found, or computed?
+5. **Mathematical correctness**: Does the statement make mathematical sense? Are there obvious contradictions?
+6. **Notation consistency**: Is mathematical notation used consistently?
+7. **Self-containedness**: Can the problem be understood without external references?
+
+### Output Format ###
+
+**Verdict**: One of:
+- "PASS" — the problem is well-defined, complete, and ready for solving.
+- "FIXABLE" — there are issues but they can be fixed automatically (list the fixes).
+- "NEEDS_INPUT" — there are issues that require human clarification (list the questions).
+
+**Issues** (if any): A numbered list of issues found, each with:
+- Category (from the list above)
+- Description of the issue
+- Suggested fix (for FIXABLE issues) or question to ask the user (for NEEDS_INPUT)
+
+**Fixed Problem** (only if verdict is FIXABLE): Output the corrected problem statement with all fixes applied. Preserve the original structure and style as much as possible.
+
+=== PROBLEM STATEMENT ===
+<<<PROBLEM>>>
+"""
+
 EDIT_PROBLEM_SYSTEM = """You help the user formulate or refine a mathematical problem for an IMO-style solver.
 
 - Ask clarifying questions. Suggest structure (hypotheses, goal, constraints).
@@ -406,6 +437,58 @@ def extract_partial_solution(problem: str, latex_content: str, api_key: str,
 
     # Use the main model (not fast model) for better quality
     return call_fast_model(prompt, api_key, provider, model_name, enable_thinking=True, timeout=600)
+
+
+def analyze_problem(problem: str, api_key: str,
+                    provider: str = "gemini", model_name: str = None) -> dict:
+    """Analyze a problem statement for quality and well-definedness.
+
+    Returns a dict with keys:
+        verdict: "PASS", "FIXABLE", or "NEEDS_INPUT"
+        analysis: Full analysis text from the LLM
+        fixed_problem: The fixed problem text (if FIXABLE), or None
+        issues: List of issue descriptions (if any)
+    """
+    prompt = PROBLEM_ANALYSIS_PROMPT.replace("<<<PROBLEM>>>", problem)
+    try:
+        result = call_fast_model(prompt, api_key, provider, model_name, enable_thinking=True, timeout=300)
+    except Exception as e:
+        return {"verdict": "ERROR", "analysis": str(e), "fixed_problem": None, "issues": []}
+
+    # Parse verdict
+    result_upper = result.upper()
+    if "VERDICT" in result_upper and "PASS" in result_upper.split("VERDICT")[1][:50]:
+        verdict = "PASS"
+    elif "FIXABLE" in result_upper:
+        verdict = "FIXABLE"
+    elif "NEEDS_INPUT" in result_upper:
+        verdict = "NEEDS_INPUT"
+    else:
+        verdict = "PASS"  # Default to pass if unclear
+
+    # Extract fixed problem (between "Fixed Problem" and end, or next section)
+    fixed_problem = None
+    if verdict == "FIXABLE":
+        markers = ["**Fixed Problem**", "## Fixed Problem", "### Fixed Problem",
+                    "Fixed Problem:", "**Fixed Problem:**"]
+        for marker in markers:
+            if marker in result:
+                fixed_part = result.split(marker, 1)[1].strip()
+                # Remove leading/trailing markdown fences
+                if fixed_part.startswith("```"):
+                    lines = fixed_part.split("\n")
+                    lines = lines[1:]  # skip ```
+                    end_idx = next((i for i, l in enumerate(lines) if l.strip() == "```"), len(lines))
+                    fixed_part = "\n".join(lines[:end_idx])
+                fixed_problem = fixed_part.strip()
+                break
+
+    return {
+        "verdict": verdict,
+        "analysis": result,
+        "fixed_problem": fixed_problem,
+        "issues": [],
+    }
 
 
 def compose_tex_with_fast_model(problem: str, solution: str, verification: str, api_key: str,
@@ -680,6 +763,7 @@ def export_to_pdf(
 def _agent_worker(
     problem_statement: str,
     other_prompts: list,
+    verify_prompts: list,
     memory_file: Optional[str],
     resume: bool,
     log_dir: str,
@@ -747,6 +831,7 @@ def _agent_worker(
         sol = ag.agent(
             problem_statement,
             other_prompts,
+            verify_prompts=verify_prompts if verify_prompts else None,
             memory_file=memory_file,
             resume_from_memory=resume,
             on_iteration_result=on_result,
@@ -836,7 +921,9 @@ def save_problem_to_file(problem_content: str, file_path: str) -> bool:
 def render_status_bar(problem_loaded: bool, memory_file: Optional[str], solution: bool, prompts: int,
                      edit_mode: bool = False, original_problem: Optional[str] = None,
                      streaming: bool = True, thinking: bool = True, interactive: bool = True,
-                     provider: str = "gemini", model: str = None) -> str:
+                     provider: str = "gemini", model: str = None,
+                     num_proof_comments: int = 0,
+                     num_verify_comments: int = 0) -> str:
     """Render a compact status line like Claude Code."""
     parts = []
     if problem_loaded:
@@ -880,6 +967,9 @@ def render_status_bar(problem_loaded: bool, memory_file: Optional[str], solution
 
     if prompts:
         parts.append(f"+{prompts} prompt(s)")
+    total_comments = num_proof_comments + num_verify_comments
+    if total_comments:
+        parts.append(f"+{num_proof_comments}p/{num_verify_comments}v comment(s)")
     return " | ".join(parts)
 
 
@@ -930,6 +1020,8 @@ def main():
     # State
     problem_statement = ""
     other_prompts = []
+    proof_comments: list = []  # Comments for guiding proof improvement
+    verify_comments: list = []  # Comments for guiding verification
     memory_file: Optional[str] = None
     base_name = "interactive"
     solution: Optional[str] = None
@@ -948,7 +1040,7 @@ def main():
     model_name: Optional[str] = None
 
     def load_from_memory(path: str) -> bool:
-        nonlocal problem_statement, other_prompts, solution, full_verification, memory_file, base_name, cached_tex
+        nonlocal problem_statement, other_prompts, proof_comments, verify_comments, solution, full_verification, memory_file, base_name, cached_tex
         path = os.path.abspath(path)
         if not os.path.exists(path):
             print(f"  File not found: {path}")
@@ -961,11 +1053,21 @@ def main():
             return False
         problem_statement = mem.get("problem_statement", "")
         other_prompts = mem.get("other_prompts", [])
+        # Load comments: support both old format (single "comments" list) and new split format
+        old_comments = mem.get("comments", [])
+        proof_comments = mem.get("proof_comments", [])
+        verify_comments = mem.get("verify_comments", [])
+        if old_comments and not proof_comments and not verify_comments:
+            # Migrate old single-list comments to proof_comments
+            proof_comments = old_comments
         solution = mem.get("solution")
         full_verification = mem.get("full_verification", mem.get("verify", ""))
         cached_tex = mem.get("cached_tex")
         memory_file = path
         base_name = os.path.splitext(os.path.basename(path))[0]
+        total_comments = len(proof_comments) + len(verify_comments)
+        if total_comments:
+            print(f"  Loaded {len(proof_comments)} proof comment(s), {len(verify_comments)} verify comment(s).")
         return True
 
     def load_from_problem(path: str) -> bool:
@@ -1158,6 +1260,86 @@ def main():
             print(f"  Error loading partial solution: {e}")
             sys.exit(1)
 
+    def do_analyze_problem():
+        """Analyze the current problem statement for quality and auto-fix if possible."""
+        nonlocal problem_statement, cached_tex, in_edit_mode
+        if not problem_statement:
+            print("  No problem loaded.")
+            return
+        print(f"  Analyzing problem statement ({len(problem_statement)} chars)...")
+        result = analyze_problem(problem_statement, api_key, provider_name, model_name)
+        verdict = result["verdict"]
+
+        if verdict == "ERROR":
+            print(f"  Analysis failed: {result['analysis']}")
+            return
+
+        if verdict == "PASS":
+            print("  Problem analysis: PASS — problem is well-defined and ready for solving.")
+            # Generate problem-only PDF
+            print("  Generating problem PDF...")
+            try:
+                ok, final_tex = export_to_pdf(
+                    problem_statement, "(Problem statement only — no solution yet.)", "",
+                    log_dir, base_name, api_key,
+                    provider=provider_name, model_name=model_name,
+                )
+                if ok and final_tex:
+                    cached_tex = None  # Don't cache problem-only PDF
+            except Exception as e:
+                print(f"  PDF generation failed: {e}")
+            return
+
+        # Show the analysis
+        print(f"\n  Problem analysis: {verdict}")
+        print("  " + "-" * 50)
+        # Print issues section from the analysis
+        for line in result["analysis"].split("\n"):
+            print(f"  {line}")
+        print("  " + "-" * 50)
+
+        if verdict == "FIXABLE" and result["fixed_problem"]:
+            print("\n  Auto-fixed problem:")
+            print("  " + "-" * 50)
+            for line in result["fixed_problem"].split("\n"):
+                print(f"    {line}")
+            print("  " + "-" * 50)
+
+            # Generate PDF with fixed problem for review
+            print("  Generating PDF with fixed problem for review...")
+            try:
+                ok, final_tex = export_to_pdf(
+                    result["fixed_problem"],
+                    "(Problem statement only — auto-fixed, pending approval.)", "",
+                    log_dir, base_name, api_key,
+                    provider=provider_name, model_name=model_name,
+                )
+            except Exception as e:
+                print(f"  PDF generation failed: {e}")
+
+            # Ask user to accept or reject
+            try:
+                choice = input("  Accept fixed problem? (y/n/edit): ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Keeping original problem.")
+                return
+            if choice in ("y", "yes"):
+                problem_statement = result["fixed_problem"]
+                cached_tex = None
+                print("  Problem updated with fixes.")
+            elif choice in ("e", "edit"):
+                # Enter edit mode with the fixed problem
+                problem_statement = result["fixed_problem"]
+                cached_tex = None
+                print("  Entering edit mode with fixed problem. Type /done when finished.")
+                in_edit_mode = True  # noqa - captured by closure
+            else:
+                print("  Keeping original problem.")
+
+        elif verdict == "NEEDS_INPUT":
+            print("\n  The problem requires clarification before it can be used.")
+            print("  Use /edit to interactively fix the problem with the agent.")
+
     def do_edit_problem(user_msg: str) -> bool:
         """Chat with agent to draft/edit problem. Returns True if problem was finalized."""
         nonlocal problem_statement, base_name, memory_file, edit_history, in_edit_mode, original_problem_path
@@ -1195,6 +1377,22 @@ def main():
         edit_history.append({"role": "model", "parts": [{"text": reply}]})
         print(f"  Agent: {reply}")
         return False
+
+    def save_comments_to_mem():
+        """Save proof and verification comments to the memory file."""
+        if not memory_file or not os.path.exists(memory_file):
+            return
+        try:
+            with open(memory_file, "r", encoding="utf-8") as f:
+                mem = json.load(f)
+            mem["proof_comments"] = proof_comments
+            mem["verify_comments"] = verify_comments
+            # Remove old single-list key if present
+            mem.pop("comments", None)
+            with open(memory_file, "w", encoding="utf-8") as f:
+                json.dump(mem, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"  Warning: could not save comments to mem: {e}")
 
     def save_tex_to_mem(tex_content: str):
         """Save cached LaTeX content to the memory file."""
@@ -1262,13 +1460,25 @@ def main():
         current_provider = use_provider if use_provider is not None else provider_name
         current_model = use_model if use_model is not None else model_name
 
+        # Merge other_prompts and proof comments for the agent
+        # Each comment is sent as a separate prompt item for individual attention
+        all_prompts = list(other_prompts)
+        for i, c in enumerate(proof_comments):
+            all_prompts.append(f"[Proof Comment {i + 1}]: {c}")
+
+        # Build verification prompts from verify comments
+        all_verify_prompts = []
+        for i, c in enumerate(verify_comments):
+            all_verify_prompts.append(f"[Verification Comment {i + 1}]: {c}")
+
         # Run agent in subprocess so Ctrl+C can terminate in-flight API calls
         result_queue = multiprocessing.Queue()
         process = multiprocessing.Process(
             target=_agent_worker,
             args=(
                 problem_statement,
-                other_prompts,
+                all_prompts,
+                all_verify_prompts,
                 memory_file,
                 bool(memory_file and solution),
                 log_dir,
@@ -1337,6 +1547,12 @@ def main():
             do_export_pdf(use_cached=True)
         except Exception as e:
             print(f"  PDF generation failed: {e}")
+    # Auto-analyze problem if newly loaded (no solution yet, not from --partial which handles its own flow)
+    elif problem_statement and not solution and not args.partial:
+        try:
+            do_analyze_problem()
+        except KeyboardInterrupt:
+            print("\n  Analysis skipped.")
 
     # Banner
     from datetime import datetime
@@ -1354,7 +1570,9 @@ def main():
             bool(problem_statement), memory_file, bool(solution), len(other_prompts),
             in_edit_mode, original_problem_path,
             enable_streaming, enable_thinking, enable_interactive,
-            provider_name, model_name
+            provider_name, model_name,
+            num_proof_comments=len(proof_comments),
+            num_verify_comments=len(verify_comments)
         )
         try:
             line = input(f"  [{status}]\n  > ").strip()
@@ -1382,16 +1600,23 @@ def main():
                 print("  /load [path]      Load memory file (.mem); no arg = pick from list")
                 print("  /problem [path]   Load problem file; no arg = pick from list")
                 print("  /partial [path]   Load LaTeX as partial solution; no arg = pick from list")
+                print("  /analyze          Re-analyze current problem for issues")
                 print("  /edit             Draft or refine problem with agent (no problem = direct chat)")
                 print("  /edit_existing    Browse and edit an existing problem file")
                 print("  /done             Save current draft as problem (in edit mode)")
                 print("  /save_as <name>   Save edited problem to a new file")
-                print("  /prompt <text>    Add prompt for next run (or type without /)")
+                print("  /prompt <text>    Add prompt for next run")
+                print("  /comment <text>   Add proof comment (bare text also works); no arg = multi-line")
+                print("  /pcomment <text>  Add proof comment (alias for /comment)")
+                print("  /vcomment <text>  Add verification comment; no arg = multi-line")
+                print("  /comments         List & manage comments (edit/delete/view)")
+                print("  /del_comment p|v <n>  Delete comment by type and number")
+                print("  /clear_comments   Clear all comments")
                 print("  /export, /e       Generate PDF (solution + verification)")
                 print("  /export md        Generate Markdown file (fallback when PDF fails)")
                 print("  /status, /s       Show state")
                 print("  /list, /l         List memory files in log-dir")
-                print("  /clear            Clear prompts")
+                print("  /clear            Clear prompts and comments")
                 print("  /streaming on|off Enable/disable streaming output")
                 print("  /thinking on|off  Enable/disable thinking process display")
                 print("  /interactive on|off Enable/disable interactive mode")
@@ -1445,13 +1670,19 @@ def main():
                     prob_path = pick_file(problems_dir, [".txt", ".md"], "problem")
                 if prob_path:
                     load_from_problem(prob_path)
-                    # Auto-generate PDF if solution exists (from resumed memory)
                     if problem_statement and solution:
+                        # Has existing solution — auto-generate PDF
                         print("  Auto-generating PDF...")
                         try:
                             do_export_pdf(use_cached=True)
                         except Exception as e:
                             print(f"  PDF generation failed: {e}")
+                    elif problem_statement and not solution:
+                        # New problem — auto-analyze
+                        try:
+                            do_analyze_problem()
+                        except KeyboardInterrupt:
+                            print("\n  Analysis skipped.")
             elif cmd == "partial":
                 # Load a LaTeX file as partial solution
                 if not problem_statement:
@@ -1529,10 +1760,162 @@ def main():
                     print(f"  +prompt #{len(other_prompts)}")
                 else:
                     print("  Usage: /prompt <instruction>")
+            elif cmd in ("comment", "c", "pcomment", "vcomment"):
+                # Determine target: proof (default) or verify
+                if cmd == "vcomment":
+                    target_list, label = verify_comments, "verify"
+                else:
+                    target_list, label = proof_comments, "proof"
+                if rest:
+                    target_list.append(rest)
+                    save_comments_to_mem()
+                    preview = rest[:60] + "..." if len(rest) > 60 else rest
+                    print(f"  +{label} comment #{len(target_list)}: {preview}")
+                else:
+                    print(f"  Enter {label} comment (Ctrl-D to finish):")
+                    lines = []
+                    try:
+                        while True:
+                            l = input("  . ")
+                            lines.append(l)
+                    except EOFError:
+                        pass
+                    except KeyboardInterrupt:
+                        print("\n  Cancelled.")
+                        continue
+                    if lines:
+                        comment_text = "\n".join(lines)
+                        target_list.append(comment_text)
+                        save_comments_to_mem()
+                        preview = lines[0][:50] + ("..." if len(lines[0]) > 50 or len(lines) > 1 else "")
+                        print(f"\n  +{label} comment #{len(target_list)} ({len(lines)} lines): {preview}")
+                    else:
+                        print("  Empty comment, not added.")
+            elif cmd in ("comments", "del_comment", "clear_comments"):
+                # Unified interactive comment management
+                def _print_comments():
+                    if not proof_comments and not verify_comments:
+                        print("  No comments.")
+                        return False
+                    if proof_comments:
+                        print(f"  Proof comments ({len(proof_comments)}):")
+                        for i, c in enumerate(proof_comments):
+                            lines_c = c.split("\n")
+                            first = lines_c[0][:70]
+                            suffix = "..." if len(lines_c) > 1 or len(lines_c[0]) > 70 else ""
+                            print(f"    [p{i + 1}] {first}{suffix}")
+                    if verify_comments:
+                        print(f"  Verification comments ({len(verify_comments)}):")
+                        for i, c in enumerate(verify_comments):
+                            lines_c = c.split("\n")
+                            first = lines_c[0][:70]
+                            suffix = "..." if len(lines_c) > 1 or len(lines_c[0]) > 70 else ""
+                            print(f"    [v{i + 1}] {first}{suffix}")
+                    return True
+
+                # Handle /del_comment p|v <n> directly
+                if cmd == "del_comment" and rest.strip():
+                    parts_dc = rest.strip().split()
+                    if len(parts_dc) == 2 and parts_dc[0] in ("p", "v") and parts_dc[1].isdigit():
+                        ctype, cnum = parts_dc[0], int(parts_dc[1]) - 1
+                        target = proof_comments if ctype == "p" else verify_comments
+                        label = "proof" if ctype == "p" else "verify"
+                        if 0 <= cnum < len(target):
+                            removed = target.pop(cnum)
+                            save_comments_to_mem()
+                            preview = removed[:50] + "..." if len(removed) > 50 else removed
+                            print(f"  Removed {label} comment #{cnum + 1}: {preview}")
+                        else:
+                            print(f"  Invalid {label} comment number. Have {len(target)} {label} comment(s).")
+                        continue
+                    else:
+                        print("  Usage: /del_comment p|v <number>")
+                        continue
+
+                # Handle /clear_comments directly
+                if cmd == "clear_comments":
+                    proof_comments.clear()
+                    verify_comments.clear()
+                    save_comments_to_mem()
+                    print("  All comments cleared.")
+                    continue
+
+                # /comments — interactive listing with edit/delete
+                has = _print_comments()
+                if not has:
+                    print("  Use /comment (proof) or /vcomment (verify) to add.")
+                    continue
+                print("  ─────")
+                print("  Actions: d p|v <n> = delete, e p|v <n> = edit, v p|v <n> = view full, q = done")
+                while True:
+                    try:
+                        action = input("  comments> ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        print()
+                        break
+                    if not action or action.lower() in ("q", "quit", "done"):
+                        break
+                    parts_a = action.split(None, 2)
+                    if len(parts_a) < 3 and parts_a[0].lower() not in ("q", "quit", "done", "l", "list"):
+                        if len(parts_a) >= 1 and parts_a[0].lower() in ("l", "list"):
+                            _print_comments()
+                            continue
+                        print("  Usage: d|e|v p|v <n>  or  l = list, q = done")
+                        continue
+                    act = parts_a[0].lower()
+                    ctype = parts_a[1].lower() if len(parts_a) > 1 else ""
+                    cnum_s = parts_a[2] if len(parts_a) > 2 else ""
+                    if ctype not in ("p", "v") or not cnum_s.isdigit():
+                        print("  Usage: d|e|v p|v <n>")
+                        continue
+                    cnum = int(cnum_s) - 1
+                    target = proof_comments if ctype == "p" else verify_comments
+                    label = "proof" if ctype == "p" else "verify"
+                    if cnum < 0 or cnum >= len(target):
+                        print(f"  Invalid {label} comment number. Have {len(target)} {label} comment(s).")
+                        continue
+                    if act == "d":
+                        removed = target.pop(cnum)
+                        save_comments_to_mem()
+                        preview = removed[:50] + "..." if len(removed) > 50 else removed
+                        print(f"  Deleted {label} comment #{cnum + 1}: {preview}")
+                        _print_comments()
+                    elif act == "v":
+                        print(f"  [{label} comment #{cnum + 1}]")
+                        print(f"  {target[cnum]}")
+                    elif act == "e":
+                        old = target[cnum]
+                        old_lines = old.split("\n")
+                        print(f"  Editing {label} comment #{cnum + 1} ({len(old_lines)} line(s)):")
+                        for ol in old_lines:
+                            print(f"  | {ol}")
+                        print(f"  Enter new text (Ctrl-D to finish, empty = cancel):")
+                        new_lines = []
+                        try:
+                            while True:
+                                l = input("  . ")
+                                new_lines.append(l)
+                        except EOFError:
+                            pass
+                        except KeyboardInterrupt:
+                            print("\n  Edit cancelled.")
+                            continue
+                        if new_lines:
+                            new_text = "\n".join(new_lines)
+                            target[cnum] = new_text
+                            save_comments_to_mem()
+                            preview = new_lines[0][:50] + ("..." if len(new_lines[0]) > 50 or len(new_lines) > 1 else "")
+                            print(f"\n  Updated {label} comment #{cnum + 1}: {preview}")
+                        else:
+                            print("  Edit cancelled (empty input).")
+                    else:
+                        print("  Unknown action. Use d = delete, e = edit, v = view, l = list, q = done")
             elif cmd in ("status", "s"):
                 print(f"  Problem: {len(problem_statement)} chars")
                 print(f"  Memory: {memory_file or '—'}")
                 print(f"  Prompts: {len(other_prompts)}")
+                print(f"  Proof comments: {len(proof_comments)}")
+                print(f"  Verify comments: {len(verify_comments)}")
                 print(f"  Solution: {'Yes' if solution else 'No'}")
                 print(f"  Verification: {'Yes' if full_verification else 'No'}")
             elif cmd == "list" or cmd == "l":
@@ -1544,10 +1927,21 @@ def main():
                         print(f"    {m}")
             elif cmd == "clear":
                 other_prompts.clear()
+                proof_comments.clear()
+                verify_comments.clear()
                 in_edit_mode = False
                 edit_history.clear()
                 original_problem_path = None
-                print("  Prompts cleared.")
+                save_comments_to_mem()
+                print("  Prompts and comments cleared.")
+            elif cmd == "analyze":
+                if not problem_statement:
+                    print("  No problem loaded.")
+                else:
+                    try:
+                        do_analyze_problem()
+                    except KeyboardInterrupt:
+                        print("\n  Analysis interrupted.")
             elif cmd in ("edit", "edit_problem"):
                 in_edit_mode = True
                 if problem_statement:
@@ -1772,7 +2166,7 @@ def main():
                 print(f"  Unknown /{cmd}. Type /help.")
             continue
 
-        # Bare input: no problem -> chat to draft; in_edit_mode -> chat; else -> add prompt
+        # Bare input: no problem -> chat to draft; in_edit_mode -> chat; else -> add comment
         if line:
             if not problem_statement or in_edit_mode:
                 try:
@@ -1780,9 +2174,10 @@ def main():
                 except KeyboardInterrupt:
                     print("\n  Interrupted.")
             else:
-                other_prompts.append(line)
-                preview = line[:50] + "..." if len(line) > 50 else line
-                print(f"  +prompt #{len(other_prompts)}: {preview}")
+                proof_comments.append(line)
+                save_comments_to_mem()
+                preview = line[:60] + "..." if len(line) > 60 else line
+                print(f"  +proof comment #{len(proof_comments)}: {preview}")
 
     agent_module.close_log_file()
     _save_readline_history()

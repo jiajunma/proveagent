@@ -88,7 +88,17 @@ def save_memory(memory_file: str, problem_statement: str, other_prompts: list,
     Returns:
         True if successful, False otherwise
     """
-    memory = {
+    # Read existing mem to preserve extra keys (e.g. proof_comments, verify_comments, cached_tex)
+    existing = {}
+    try:
+        if os.path.exists(memory_file):
+            with open(memory_file, 'r', encoding='utf-8') as f:
+                existing = json.load(f)
+    except Exception:
+        pass
+
+    memory = existing
+    memory.update({
         "problem_statement": problem_statement,
         "other_prompts": other_prompts,
         "current_iteration": current_iteration,
@@ -97,8 +107,8 @@ def save_memory(memory_file: str, problem_statement: str, other_prompts: list,
         "verify": verify,
         "full_verification": full_verification,
         "timestamp": __import__('datetime').datetime.now().isoformat()
-    }
-    
+    })
+
     try:
         # Ensure directory exists
         os.makedirs(os.path.dirname(os.path.abspath(memory_file)), exist_ok=True)

@@ -43,6 +43,7 @@ class ProofState:
     """Represents the current state of a proof attempt."""
     problem_statement: str = ""
     other_prompts: List[str] = field(default_factory=list)
+    verify_prompts: List[str] = field(default_factory=list)  # Additional prompts for verification only
     solution: Optional[str] = None
     bug_report: str = ""
     full_verification: str = ""
@@ -58,6 +59,7 @@ class ProofState:
         return {
             "problem_statement": self.problem_statement,
             "other_prompts": self.other_prompts,
+            "verify_prompts": self.verify_prompts,
             "solution": self.solution,
             "bug_report": self.bug_report,
             "full_verification": self.full_verification,
@@ -75,6 +77,7 @@ class ProofState:
         state = cls()
         state.problem_statement = data.get("problem_statement", "")
         state.other_prompts = data.get("other_prompts", [])
+        state.verify_prompts = data.get("verify_prompts", [])
         state.solution = data.get("solution")
         state.bug_report = data.get("bug_report", "")
         state.full_verification = data.get("full_verification", "")
@@ -230,7 +233,7 @@ class ProofEngine:
         if not mf:
             return False
             
-        return save_memory(
+        result = save_memory(
             mf,
             self.state.problem_statement,
             self.state.other_prompts,
@@ -240,6 +243,19 @@ class ProofEngine:
             "yes" if self.state.verification_passed else "no",
             self.state.full_verification
         )
+        # Save extra state fields that save_memory doesn't cover
+        if result:
+            try:
+                import json
+                with open(mf, "r", encoding="utf-8") as f:
+                    mem = json.load(f)
+                mem["consecutive_correct"] = self.state.consecutive_correct
+                mem["verify_prompts"] = self.state.verify_prompts
+                with open(mf, "w", encoding="utf-8") as f:
+                    json.dump(mem, f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass  # Best effort
+        return result
     
     def initialize_exploration(self, 
                               problem_statement: str,
@@ -310,12 +326,18 @@ class ProofEngine:
             self.state.problem_statement,
             self.state.solution
         )
-        
+
+        # Append verification-specific comments if any
+        verify_other = None
+        if self.state.verify_prompts:
+            verify_other = list(self.state.verify_prompts)
+
         try:
             # Get verification result
             response = self.client.generate(
                 system_prompt=prompts.VERIFICATION_SYSTEM_PROMPT,
                 user_prompt=verification_prompt,
+                other_prompts=verify_other,
                 enable_thinking=show_thinking,
                 streaming=streaming
             )
@@ -538,6 +560,7 @@ class ProofEngine:
     def run(self,
            problem_statement: Optional[str] = None,
            other_prompts: Optional[List[str]] = None,
+           verify_prompts: Optional[List[str]] = None,
            resume: bool = False,
            streaming: bool = True,
            show_thinking: bool = True) -> Optional[str]:
@@ -563,6 +586,8 @@ class ProofEngine:
             self.state.problem_statement = problem_statement
             if other_prompts:
                 self.state.other_prompts = other_prompts
+            if verify_prompts:
+                self.state.verify_prompts = verify_prompts
         
         # Check if we have a problem
         if not self.state.problem_statement:
@@ -580,6 +605,7 @@ class ProofEngine:
             
             if not success:
                 print(">>>>>>> Failed in finding a complete solution.")
+                self.save_state()
                 return None
             
             # First verification
@@ -614,15 +640,19 @@ class ProofEngine:
                 except Exception as e:
                     print(f">>>>>>> Callback error: {e}")
 
+            self.save_state()
+
         # Main loop
         while True:
             should_continue, success = self.run_iteration(streaming, show_thinking)
-            
+
             if not should_continue:
                 if success:
                     print(">>>>>>> Proof complete!")
                 else:
                     print(">>>>>>> Proof process ended.")
                 break
-        
+
+        # Final save to ensure latest state is persisted
+        self.save_state()
         return self.state.solution
