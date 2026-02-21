@@ -26,6 +26,7 @@ try:
     # Slash-command completions
     _READLINE_COMMANDS = [
         "/run", "/r", "/load", "/problem", "/prompt", "/add", "/p",
+        "/partial",
         "/export", "/e", "/status", "/s", "/list", "/l", "/clear",
         "/edit", "/edit_problem", "/done", "/edit_existing", "/save_as",
         "/streaming", "/thinking", "/interactive", "/run_mode", "/quota",
@@ -324,6 +325,45 @@ def call_flash_chat(
     return call_fast_model_chat(system_prompt, contents, api_key, "gemini", None, True, timeout)
 
 
+PARTIAL_SOLUTION_EXTRACT_TEMPLATE = """You are an expert mathematician. You are given a problem statement and a LaTeX document that contains a partial or draft solution (possibly incomplete, informal, or mixed with scratch work).
+
+Your task is to extract and reorganize the mathematical content into a clean **partial solution** that can serve as a starting point for further rigorous proof work.
+
+### Output Format ###
+
+Your response MUST follow this exact structure:
+
+**1. Summary**
+
+*   **a. Verdict:** State clearly: "This is a partial solution." Then list the main rigorous conclusions that have been established so far.
+*   **b. Method Sketch:** Describe the overall strategy attempted so far, including:
+    - What has been proven rigorously
+    - What key lemmas or intermediate results are established
+    - What remains to be proven or what gaps exist
+    - Any promising directions or approaches identified but not yet completed
+
+**2. Detailed Solution**
+
+Present the rigorous parts of the solution in a clean, step-by-step format:
+- Include all definitions, lemmas, and proofs that are mathematically sound
+- Clearly mark where the proof is incomplete with comments like "[TODO: ...]" or "[Gap: ...]"
+- Preserve all correct mathematical reasoning from the original
+- Remove scratch work, dead ends, and informal notes that don't contribute to the proof
+- Use TeX for all mathematics: $...$ for inline, \\[...\\] for display
+
+### Important Guidelines ###
+- Be faithful to the original content — do NOT invent new proofs or fill gaps yourself
+- If the original contains errors, note them but include the surrounding correct work
+- Organize the content logically even if the original is disorganized
+- Keep all established results, even if the overall proof is incomplete
+
+=== PROBLEM STATEMENT ===
+<<<PROBLEM>>>
+
+=== LATEX DOCUMENT ===
+<<<LATEX>>>
+"""
+
 EDIT_PROBLEM_SYSTEM = """You help the user formulate or refine a mathematical problem for an IMO-style solver.
 
 - Ask clarifying questions. Suggest structure (hypotheses, goal, constraints).
@@ -345,7 +385,30 @@ def _extract_latex(out: str) -> str:
     return out.strip()
 
 
-def compose_tex_with_fast_model(problem: str, solution: str, verification: str, api_key: str, 
+def extract_partial_solution(problem: str, latex_content: str, api_key: str,
+                             provider: str = "gemini", model_name: str = None) -> str:
+    """Extract and organize a partial solution from a LaTeX document.
+
+    Uses the main model (not the fast/cheap model) for better quality extraction.
+
+    Args:
+        problem: The problem statement
+        latex_content: Raw LaTeX content from the file
+        api_key: API key for the provider
+        provider: API provider name
+        model_name: Optional specific model name
+
+    Returns:
+        Organized partial solution text in the format expected by the proof engine
+    """
+    prompt = PARTIAL_SOLUTION_EXTRACT_TEMPLATE.replace("<<<PROBLEM>>>", problem)
+    prompt = prompt.replace("<<<LATEX>>>", latex_content)
+
+    # Use the main model (not fast model) for better quality
+    return call_fast_model(prompt, api_key, provider, model_name, enable_thinking=True, timeout=600)
+
+
+def compose_tex_with_fast_model(problem: str, solution: str, verification: str, api_key: str,
                                  provider: str = "gemini", model_name: str = None) -> str:
     """Compose LaTeX using the provider's fast/cheap model.
     
@@ -752,6 +815,11 @@ def main():
     parser.add_argument("--mem", "--memory", type=str,
                        help="Explicitly load a memory file (.mem) to resume from a previous session")
 
+    # Add partial solution file loading option
+    parser.add_argument("--partial", type=str,
+                       help="Load a LaTeX file as partial solution (requires --problem or path)")
+
+
     # Add option to list available memory files
     parser.add_argument("--list-mem", action="store_true",
                        help="List available memory files and exit")
@@ -954,6 +1022,50 @@ def main():
         print("  Note: Selected model does not support streaming or thinking display.")
         print("  These features have been automatically disabled.")
 
+    # Handle --partial flag: load LaTeX as partial solution at startup
+    if args.partial:
+        if not problem_statement:
+            print("  Error: --partial requires a problem to be loaded first (use --problem or positional arg).")
+            sys.exit(1)
+        partial_path = os.path.abspath(args.partial)
+        if not os.path.exists(partial_path):
+            print(f"  Partial solution file not found: {partial_path}")
+            sys.exit(1)
+        try:
+            with open(partial_path, "r", encoding="utf-8") as f:
+                latex_content = f.read()
+            if not latex_content.strip():
+                print("  Partial solution file is empty.")
+                sys.exit(1)
+            print(f"  Extracting partial solution from {os.path.basename(partial_path)}...")
+            partial_sol = extract_partial_solution(
+                problem_statement, latex_content, api_key,
+                provider=provider_name, model_name=model_name
+            )
+            if partial_sol and partial_sol.strip():
+                solution = partial_sol
+                if memory_file:
+                    agent_module.save_memory(
+                        memory_file, problem_statement, other_prompts,
+                        0, 30, solution, "no", ""
+                    )
+                print(f"  Partial solution loaded ({len(partial_sol)} chars). Use /run to continue.")
+                # Auto-generate PDF
+                print("  Auto-generating PDF for partial solution...")
+                try:
+                    export_to_pdf(
+                        problem_statement, solution, "",
+                        log_dir, base_name, api_key,
+                        provider=provider_name, model_name=model_name,
+                    )
+                except Exception as e:
+                    print(f"  PDF generation failed: {e}")
+            else:
+                print("  Warning: Failed to extract partial solution. Starting without it.")
+        except Exception as e:
+            print(f"  Error loading partial solution: {e}")
+            sys.exit(1)
+
     def do_edit_problem(user_msg: str) -> bool:
         """Chat with agent to draft/edit problem. Returns True if problem was finalized."""
         nonlocal problem_statement, base_name, memory_file, edit_history, in_edit_mode, original_problem_path
@@ -1074,6 +1186,18 @@ def main():
                 solution = mem.get("solution") or solution
                 full_verification = mem.get("full_verification", mem.get("verify", ""))
 
+    # Auto-generate PDF if we loaded a problem with an existing solution
+    if problem_statement and solution:
+        print("  Auto-generating PDF for loaded solution...")
+        try:
+            export_to_pdf(
+                problem_statement, solution, full_verification,
+                log_dir, base_name, api_key,
+                provider=provider_name, model_name=model_name,
+            )
+        except Exception as e:
+            print(f"  PDF generation failed: {e}")
+
     # Banner
     from datetime import datetime
     print()
@@ -1117,6 +1241,7 @@ def main():
                 print("  /run, /r          Run the agent")
                 print("  /load <path>      Load agent memory file (.mem)")
                 print("  /problem <path>   Load problem file")
+                print("  /partial <path>   Load LaTeX file as partial solution (starting point)")
                 print("  /edit             Draft or refine problem with agent (no problem = direct chat)")
                 print("  /edit_existing    Browse and edit an existing problem file")
                 print("  /done             Save current draft as problem (in edit mode)")
@@ -1159,6 +1284,17 @@ def main():
             elif cmd == "load":
                 if rest:
                     load_from_memory(rest.strip())
+                    # Auto-generate PDF if solution exists after loading
+                    if problem_statement and solution:
+                        print("  Auto-generating PDF...")
+                        try:
+                            export_to_pdf(
+                                problem_statement, solution, full_verification,
+                                log_dir, base_name, api_key,
+                                provider=provider_name, model_name=model_name,
+                            )
+                        except Exception as e:
+                            print(f"  PDF generation failed: {e}")
                 else:
                     mems = list_memory_files(log_dir)
                     if not mems:
@@ -1170,8 +1306,93 @@ def main():
             elif cmd == "problem":
                 if rest:
                     load_from_problem(rest.strip())
+                    # Auto-generate PDF if solution exists (from resumed memory)
+                    if problem_statement and solution:
+                        print("  Auto-generating PDF...")
+                        try:
+                            export_to_pdf(
+                                problem_statement, solution, full_verification,
+                                log_dir, base_name, api_key,
+                                provider=provider_name, model_name=model_name,
+                            )
+                        except Exception as e:
+                            print(f"  PDF generation failed: {e}")
                 else:
                     print("  Usage: /problem <path>")
+            elif cmd == "partial":
+                # Load a LaTeX file as partial solution
+                if not rest:
+                    print("  Usage: /partial <latex_file>")
+                    print("  Loads a LaTeX file and extracts a partial solution as starting point.")
+                    print("  Requires a problem to be loaded first (/problem).")
+                    continue
+                if not problem_statement:
+                    print("  Load a problem first (/problem <path>), then use /partial.")
+                    continue
+                latex_path = rest.strip()
+                if not os.path.isabs(latex_path) and not os.path.exists(latex_path):
+                    # Try log_dir and common locations
+                    for candidate_dir in [log_dir, os.path.join(script_dir, "..", "run_logs"), "."]:
+                        candidate = os.path.join(candidate_dir, latex_path)
+                        if os.path.exists(candidate):
+                            latex_path = candidate
+                            break
+                latex_path = os.path.abspath(latex_path)
+                if not os.path.exists(latex_path):
+                    print(f"  File not found: {latex_path}")
+                    continue
+                try:
+                    with open(latex_path, "r", encoding="utf-8") as f:
+                        latex_content = f.read()
+                except Exception as e:
+                    print(f"  Error reading file: {e}")
+                    continue
+                if not latex_content.strip():
+                    print("  File is empty.")
+                    continue
+                print(f"  Loaded {len(latex_content)} chars from {os.path.basename(latex_path)}")
+                print(f"  Extracting partial solution using {provider_name}...")
+                try:
+                    partial_sol = extract_partial_solution(
+                        problem_statement, latex_content, api_key,
+                        provider=provider_name, model_name=model_name
+                    )
+                    if partial_sol and partial_sol.strip():
+                        solution = partial_sol
+                        # Save to memory so /run will pick it up as resume
+                        if memory_file:
+                            agent_module.save_memory(
+                                memory_file,
+                                problem_statement,
+                                other_prompts,
+                                0,  # iteration
+                                30,  # max_iterations
+                                solution,
+                                "no",  # not verified yet
+                                ""  # no verification yet
+                            )
+                        print(f"  Partial solution extracted ({len(partial_sol)} chars).")
+                        # Show a preview
+                        preview_lines = partial_sol.strip().split("\n")[:8]
+                        for pl in preview_lines:
+                            print(f"    {pl}")
+                        if len(partial_sol.strip().split("\n")) > 8:
+                            print("    ...")
+                        # Auto-generate PDF
+                        print("  Auto-generating PDF for partial solution...")
+                        try:
+                            export_to_pdf(
+                                problem_statement, solution, "",
+                                log_dir, base_name, api_key,
+                                provider=provider_name, model_name=model_name,
+                            )
+                        except Exception as e:
+                            print(f"  PDF generation failed: {e}")
+                        print("  Use /run to continue proving from this starting point.")
+                    else:
+                        print("  Failed to extract partial solution (empty result).")
+                except Exception as e:
+                    print(f"  Error extracting partial solution: {e}")
             elif cmd in ("prompt", "add", "p"):
                 if rest:
                     other_prompts.append(rest)
