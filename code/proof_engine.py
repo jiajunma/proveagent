@@ -34,6 +34,10 @@ except ImportError:
 # Data Classes
 # ============================================================================
 
+# Number of consecutive verification passes required to accept a solution
+REQUIRED_CONSECUTIVE_PASS = 5
+
+
 @dataclass
 class ProofState:
     """Represents the current state of a proof attempt."""
@@ -47,7 +51,8 @@ class ProofState:
     max_iterations: int = 30
     error_count: int = 0
     correct_count: int = 0
-    
+    consecutive_correct: int = 0  # Consecutive verification passes (resets on failure)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert state to dictionary for serialization."""
         return {
@@ -61,8 +66,9 @@ class ProofState:
             "max_iterations": self.max_iterations,
             "error_count": self.error_count,
             "correct_count": self.correct_count,
+            "consecutive_correct": self.consecutive_correct,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProofState":
         """Create state from dictionary."""
@@ -77,6 +83,7 @@ class ProofState:
         state.max_iterations = data.get("max_iterations", 30)
         state.error_count = data.get("error_count", 0)
         state.correct_count = data.get("correct_count", 0)
+        state.consecutive_correct = data.get("consecutive_correct", 0)
         return state
 
 
@@ -334,11 +341,14 @@ class ProofEngine:
                 self.state.bug_report = extract_detailed_solution(
                     verification_output, "Detailed Verification", after=False
                 )
+                self.state.consecutive_correct = 0  # Reset on failure
             else:
                 self.state.bug_report = ""
                 self.state.correct_count += 1
-            
-            print(f">>>>>>> Verification {'passed' if self.state.verification_passed else 'failed'}.")
+                self.state.consecutive_correct += 1
+
+            print(f">>>>>>> Verification {'passed' if self.state.verification_passed else 'failed'}."
+                  f" (consecutive pass: {self.state.consecutive_correct}/{REQUIRED_CONSECUTIVE_PASS})")
             return self.state.verification_passed
             
         except Exception as e:
@@ -392,6 +402,7 @@ class ProofEngine:
                 return False
             
             self.state.solution = new_solution
+            self.state.consecutive_correct = 0  # Reset on solution change
             print(">>>>>>> Solution improved.")
             return True
             
@@ -442,7 +453,7 @@ class ProofEngine:
             - success: Whether a complete solution was found
         """
         print(f"\n===== Iteration {self.state.current_iteration} =====")
-        print(f"Correct count: {self.state.correct_count}, Error count: {self.state.error_count}")
+        print(f"Correct: {self.state.correct_count} (consecutive: {self.state.consecutive_correct}/{REQUIRED_CONSECUTIVE_PASS}), Errors: {self.state.error_count}")
         
         # Check quota
         if quota_manager.quota_exceeded:
@@ -455,44 +466,52 @@ class ProofEngine:
         
         # Verify current solution
         is_correct = self.verify_solution(streaming, show_thinking)
-        
+
+        # Call callback after verification (PDF update with new verification report)
+        if self.on_iteration and self.state.solution:
+            try:
+                self.on_iteration(
+                    self.state.problem_statement,
+                    self.state.solution,
+                    self.state.full_verification,
+                    self.state.current_iteration
+                )
+            except Exception as e:
+                print(f">>>>>>> Callback error: {e}")
+
         if is_correct:
-            print(">>>>>>> Verification passed!")
-            
-            if self.check_completeness():
-                print(">>>>>>> Solution is complete!")
+            print(f">>>>>>> Verification passed! ({self.state.consecutive_correct}/{REQUIRED_CONSECUTIVE_PASS})")
+
+            if self.state.consecutive_correct >= REQUIRED_CONSECUTIVE_PASS and self.check_completeness():
+                print(f">>>>>>> Solution verified {REQUIRED_CONSECUTIVE_PASS} consecutive times. Complete!")
                 self.save_state()
-                
-                # Call callback if provided
-                if self.on_iteration:
-                    try:
-                        self.on_iteration(
-                            self.state.problem_statement,
-                            self.state.solution,
-                            self.state.full_verification,
-                            self.state.current_iteration
-                        )
-                    except Exception as e:
-                        print(f">>>>>>> Callback error: {e}")
-                
                 return False, True
-            else:
-                print(">>>>>>> Solution is correct but not claimed complete. Continuing...")
+            elif self.state.consecutive_correct >= REQUIRED_CONSECUTIVE_PASS:
+                print(">>>>>>> Solution passed all verifications but not claimed complete. Continuing...")
                 is_correct = False  # Force improvement
-        
+            else:
+                print(f">>>>>>> Need {REQUIRED_CONSECUTIVE_PASS - self.state.consecutive_correct} more consecutive pass(es). Re-verifying...")
+                # Don't improve — just re-verify in next iteration
+                self.save_state()
+                self.state.current_iteration += 1
+                if self.state.current_iteration >= self.state.max_iterations:
+                    print(">>>>>>> Maximum iterations reached.")
+                    return False, False
+                return True, False
+
         # Improve solution if needed
         if not is_correct:
             print(f">>>>>>> Solution needs improvement.")
-            
+
             success = self.improve_solution(streaming, show_thinking)
-            
+
             if not success:
                 if self.state.error_count >= 3:
                     print(">>>>>>> Too many errors. Stopping.")
                     self.save_state()
                     return False, False
-            
-            # Call callback if provided
+
+            # Call callback after improvement (PDF update with new solution)
             if self.on_iteration and self.state.solution:
                 try:
                     self.on_iteration(
@@ -503,7 +522,7 @@ class ProofEngine:
                     )
                 except Exception as e:
                     print(f">>>>>>> Callback error: {e}")
-            
+
             # Save state
             self.save_state()
         
@@ -582,7 +601,19 @@ class ProofEngine:
         else:
             # Verify existing solution
             self.verify_solution(streaming, show_thinking)
-        
+
+            # Call callback after verification (PDF update with verification report)
+            if self.on_iteration and self.state.solution:
+                try:
+                    self.on_iteration(
+                        self.state.problem_statement,
+                        self.state.solution,
+                        self.state.full_verification,
+                        -1
+                    )
+                except Exception as e:
+                    print(f">>>>>>> Callback error: {e}")
+
         # Main loop
         while True:
             should_continue, success = self.run_iteration(streaming, show_thinking)

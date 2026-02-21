@@ -561,17 +561,26 @@ def export_to_pdf(
     max_attempts: int = 5,
     provider: str = "gemini",
     model_name: str = None,
-) -> bool:
+    cached_tex: str = None,
+) -> Tuple[bool, Optional[str]]:
     """Export solution to PDF using the provider's fast model for LaTeX composition.
-    
+
     For kimi: uses kimi-k2.5 without thinking for LaTeX tasks.
     If PDF generation fails, automatically falls back to Markdown export.
+
+    Args:
+        cached_tex: If provided, use this LaTeX source directly instead of calling LLM.
+
+    Returns:
+        Tuple of (success, final_tex_content).
+        success: True if PDF was generated.
+        final_tex_content: The compiled LaTeX source (for caching), or None on failure.
     """
     tex_name = f"{base_name}-temp.tex"
     tex_path = os.path.join(output_dir, tex_name)
     pdf_path = os.path.join(output_dir, f"{base_name}-temp.pdf")
     os.makedirs(output_dir, exist_ok=True)
-    
+
     # Clean up previous generated files
     temp_extensions = ['.pdf', '.aux', '.log', '.out', '.toc', '.synctex.gz', '.fdb_latexmk', '.fls']  # Note: .log is LaTeX log, not proof log
     for ext in temp_extensions:
@@ -582,57 +591,68 @@ def export_to_pdf(
             except OSError:
                 pass  # Ignore errors if file is locked
 
-    # Get the model name for display
-    provider_lower = provider.lower()
-    fast_model = FAST_MODELS.get(provider_lower)
-    
-    if provider_lower == "kimi":
-        # For kimi: force use kimi-k2.5 without thinking for LaTeX tasks
-        # Ignore the passed model_name (which may be kimi-k2-thinking for prove)
-        latex_model = fast_model or "kimi-k2.5"
-        print(f"  Composing LaTeX using {provider} ({latex_model}, no thinking)...")
-    else:
-        # For other providers: use fast/cheap model
-        latex_model = fast_model or model_name or "default"
-        print(f"  Composing LaTeX using {provider}'s fast model ({latex_model})...")
-
     skip_fast_fix = False
     latex = None
-    try:
-        latex = compose_tex_with_fast_model(problem, solution, verification or "Verification pending.", 
-                                             api_key, provider, latex_model)
-    except Exception as e:
-        print(f"  Fast model failed ({e}), using res2md fallback...")
-        skip_fast_fix = True
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".tex", delete=False) as f:
-            tmp = f.name
+
+    if cached_tex:
+        # Use cached LaTeX content, skip LLM call
+        print("  Using cached LaTeX content...")
+        latex = cached_tex
+    else:
+        # Get the model name for display
+        provider_lower = provider.lower()
+        fast_model = FAST_MODELS.get(provider_lower)
+
+        if provider_lower == "kimi":
+            latex_model = fast_model or "kimi-k2.5"
+            print(f"  Composing LaTeX using {provider} ({latex_model}, no thinking)...")
+        else:
+            latex_model = fast_model or model_name or "default"
+            print(f"  Composing LaTeX using {provider}'s fast model ({latex_model})...")
+
         try:
-            mem = {"problem_statement": problem, "solution": solution}
-            res2md_memory_to_tex(mem, tmp)
-            with open(tmp, "r", encoding="utf-8") as f:
-                latex = f.read()
-            if verification:
-                from res2md import markdown_to_latex
-                latex = latex.replace(
-                    "\\end{document}",
-                    "\n\\section{Verification Report}\n\n" + markdown_to_latex(verification) + "\n\\end{document}",
-                )
-        finally:
-            os.unlink(tmp)
-    
+            latex = compose_tex_with_fast_model(problem, solution, verification or "Verification pending.",
+                                                 api_key, provider, latex_model)
+        except Exception as e:
+            print(f"  Fast model failed ({e}), using res2md fallback...")
+            skip_fast_fix = True
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".tex", delete=False) as f:
+                tmp = f.name
+            try:
+                mem = {"problem_statement": problem, "solution": solution}
+                res2md_memory_to_tex(mem, tmp)
+                with open(tmp, "r", encoding="utf-8") as f:
+                    latex = f.read()
+                if verification:
+                    from res2md import markdown_to_latex
+                    latex = latex.replace(
+                        "\\end{document}",
+                        "\n\\section{Verification Report}\n\n" + markdown_to_latex(verification) + "\n\\end{document}",
+                    )
+            finally:
+                os.unlink(tmp)
+
     # If we still don't have valid LaTeX, skip to Markdown export
     if not latex or not isinstance(latex, str):
         print("  Could not generate LaTeX content.")
         print("  Falling back to Markdown export...")
         md_path = export_to_md(problem, solution, verification, output_dir, base_name)
         print(f"  ✓ Markdown: {md_path}")
-        return False
+        return False, None
 
     if "\\begin{document}" not in latex:
         latex = latex.rstrip() + "\n\n\\begin{document}\n\n\\end{document}\n"
     if "\\end{document}" not in latex:
         latex = latex.rstrip() + "\n\n\\end{document}\n"
+
+    # Need provider info for fix attempts
+    if not cached_tex:
+        provider_lower = provider.lower()
+        fast_model = FAST_MODELS.get(provider_lower)
+        latex_model = (fast_model or "kimi-k2.5") if provider_lower == "kimi" else (fast_model or model_name or "default")
+    else:
+        latex_model = None
 
     for attempt in range(max_attempts):
         with open(tex_path, "w", encoding="utf-8") as f:
@@ -641,10 +661,10 @@ def export_to_pdf(
         if success:
             print(f"  ✓ PDF: {pdf_path}")
             open_pdf(pdf_path)
-            return True
+            return True, latex
         err_snippet = "\n".join(err.strip().split("\n")[-60:])
         print(f"  Compile attempt {attempt + 1}/{max_attempts} failed")
-        if attempt < max_attempts - 1 and not skip_fast_fix:
+        if attempt < max_attempts - 1 and not skip_fast_fix and latex_model:
             try:
                 latex = fix_tex_with_fast_model(latex, err_snippet, api_key, provider, latex_model)
             except Exception as e:
@@ -654,7 +674,7 @@ def export_to_pdf(
     print("  Falling back to Markdown export...")
     md_path = export_to_md(problem, solution, verification, output_dir, base_name)
     print(f"  ✓ Markdown: {md_path}")
-    return False
+    return False, None
 
 
 def _agent_worker(
@@ -696,7 +716,18 @@ def _agent_worker(
 
     def on_result(prob, sol, verif, _iter):
         print(f"  [iter {_iter}] Exporting PDF...")
-        export_to_pdf(prob, sol, verif, log_dir, base_name, api_key, provider=provider_name, model_name=model_name)
+        ok, final_tex = export_to_pdf(prob, sol, verif, log_dir, base_name, api_key, provider=provider_name, model_name=model_name)
+        # Save tex to mem file so main process can reuse it
+        if ok and final_tex and memory_file:
+            try:
+                if os.path.exists(memory_file):
+                    with open(memory_file, "r", encoding="utf-8") as f:
+                        mem_data = json.load(f)
+                    mem_data["cached_tex"] = final_tex
+                    with open(memory_file, "w", encoding="utf-8") as f:
+                        json.dump(mem_data, f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass  # Best-effort in subprocess
 
     log_path = os.path.join(log_dir, f"{base_name}_interactive.prooflog")
     ag.set_log_file(log_path)
@@ -728,6 +759,56 @@ def _agent_worker(
         result_queue.put(("error", str(e)))
     finally:
         ag.close_log_file()
+
+
+def list_files_by_ext(directory: str, extensions: list) -> list:
+    """List files in directory matching given extensions, sorted by modification time (newest first)."""
+    if not os.path.isdir(directory):
+        return []
+    return sorted(
+        [f for f in os.listdir(directory)
+         if os.path.isfile(os.path.join(directory, f)) and
+         any(f.endswith(ext) for ext in extensions)],
+        key=lambda x: os.path.getmtime(os.path.join(directory, x)),
+        reverse=True,
+    )
+
+
+def pick_file(directory: str, extensions: list, label: str, max_show: int = 20) -> Optional[str]:
+    """Show a numbered list of files and let the user pick one.
+
+    Returns the absolute path of the selected file, or None if cancelled.
+    """
+    files = list_files_by_ext(directory, extensions)
+    if not files:
+        print(f"  No {label} files found in {directory}")
+        return None
+
+    print(f"  Available {label} files:")
+    for i, f in enumerate(files[:max_show]):
+        # Show file size for context
+        fpath = os.path.join(directory, f)
+        size = os.path.getsize(fpath)
+        if size < 1024:
+            size_str = f"{size}B"
+        else:
+            size_str = f"{size // 1024}KB"
+        print(f"    [{i + 1}] {f}  ({size_str})")
+    if len(files) > max_show:
+        print(f"    ... and {len(files) - max_show} more")
+
+    try:
+        sel = input(f"  Select {label} (number, or Enter to cancel): ").strip()
+        if not sel:
+            print("  Cancelled.")
+            return None
+        if not sel.isdigit() or int(sel) < 1 or int(sel) > min(len(files), max_show):
+            print("  Invalid selection.")
+            return None
+        return os.path.abspath(os.path.join(directory, files[int(sel) - 1]))
+    except (KeyboardInterrupt, EOFError):
+        print("\n  Cancelled.")
+        return None
 
 
 def list_memory_files(log_dir: str) -> list:
@@ -853,6 +934,7 @@ def main():
     base_name = "interactive"
     solution: Optional[str] = None
     full_verification = ""
+    cached_tex: Optional[str] = None  # Cached LaTeX source for PDF generation
     api_key = None
     edit_history: list = []
     in_edit_mode: bool = False  # True = bare input goes to problem-editing dialogue
@@ -866,7 +948,7 @@ def main():
     model_name: Optional[str] = None
 
     def load_from_memory(path: str) -> bool:
-        nonlocal problem_statement, other_prompts, solution, full_verification, memory_file, base_name
+        nonlocal problem_statement, other_prompts, solution, full_verification, memory_file, base_name, cached_tex
         path = os.path.abspath(path)
         if not os.path.exists(path):
             print(f"  File not found: {path}")
@@ -881,6 +963,7 @@ def main():
         other_prompts = mem.get("other_prompts", [])
         solution = mem.get("solution")
         full_verification = mem.get("full_verification", mem.get("verify", ""))
+        cached_tex = mem.get("cached_tex")
         memory_file = path
         base_name = os.path.splitext(os.path.basename(path))[0]
         return True
@@ -1053,11 +1136,20 @@ def main():
                 # Auto-generate PDF
                 print("  Auto-generating PDF for partial solution...")
                 try:
-                    export_to_pdf(
+                    ok, final_tex = export_to_pdf(
                         problem_statement, solution, "",
                         log_dir, base_name, api_key,
                         provider=provider_name, model_name=model_name,
                     )
+                    if ok and final_tex:
+                        cached_tex = final_tex
+                        # Save tex to mem
+                        if memory_file and os.path.exists(memory_file):
+                            with open(memory_file, "r", encoding="utf-8") as f:
+                                mem_data = json.load(f)
+                            mem_data["cached_tex"] = final_tex
+                            with open(memory_file, "w", encoding="utf-8") as f:
+                                json.dump(mem_data, f, indent=2, ensure_ascii=False)
                 except Exception as e:
                     print(f"  PDF generation failed: {e}")
             else:
@@ -1104,6 +1196,50 @@ def main():
         print(f"  Agent: {reply}")
         return False
 
+    def save_tex_to_mem(tex_content: str):
+        """Save cached LaTeX content to the memory file."""
+        nonlocal cached_tex
+        cached_tex = tex_content
+        if not memory_file or not os.path.exists(memory_file):
+            return
+        try:
+            with open(memory_file, "r", encoding="utf-8") as f:
+                mem = json.load(f)
+            mem["cached_tex"] = tex_content
+            with open(memory_file, "w", encoding="utf-8") as f:
+                json.dump(mem, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"  Warning: could not save tex to mem: {e}")
+
+    def do_export_pdf(use_cached: bool = True, prov: str = None, mdl: str = None):
+        """Export PDF, using cached tex if available. Updates cached_tex on success."""
+        nonlocal cached_tex
+        if not solution:
+            print("  No solution yet. Run /run first.")
+            return
+        tex_to_use = cached_tex if use_cached else None
+        ok, final_tex = export_to_pdf(
+            problem_statement, solution, full_verification,
+            log_dir, base_name, api_key,
+            provider=prov or provider_name,
+            model_name=mdl or model_name,
+            cached_tex=tex_to_use,
+        )
+        if ok and final_tex:
+            save_tex_to_mem(final_tex)
+        elif not ok and tex_to_use:
+            # Cached tex failed to compile, retry without cache
+            print("  Cached LaTeX failed, regenerating...")
+            cached_tex = None
+            ok, final_tex = export_to_pdf(
+                problem_statement, solution, full_verification,
+                log_dir, base_name, api_key,
+                provider=prov or provider_name,
+                model_name=mdl or model_name,
+            )
+            if ok and final_tex:
+                save_tex_to_mem(final_tex)
+
     def do_export(fmt: str = "pdf"):
         if not solution:
             print("  No solution yet. Run /run first.")
@@ -1115,14 +1251,12 @@ def main():
             )
             print(f"  ✓ Markdown exported: {md_path}")
         else:
-            export_to_pdf(
-                problem_statement, solution, full_verification,
-                log_dir, base_name, api_key, provider=provider_name, model_name=model_name,
-            )
+            # /export always regenerates (no cache), since user explicitly requested
+            do_export_pdf(use_cached=False)
 
     def do_run(streaming=True, show_thinking=True, interactive=True,
                use_provider=None, use_model=None):
-        nonlocal solution, full_verification, provider_name, model_name
+        nonlocal solution, full_verification, provider_name, model_name, cached_tex
 
         # 如果提供了特定的provider和model，则使用它们
         current_provider = use_provider if use_provider is not None else provider_name
@@ -1185,16 +1319,22 @@ def main():
                 mem = json.load(f)
                 solution = mem.get("solution") or solution
                 full_verification = mem.get("full_verification", mem.get("verify", ""))
+                cached_tex = mem.get("cached_tex")  # subprocess may have saved tex
+        # Auto-generate PDF with final solution + verification
+        if problem_statement and solution:
+            print("  Auto-generating PDF with final results...")
+            # Invalidate cached tex since solution/verification likely changed
+            cached_tex = None
+            try:
+                do_export_pdf(use_cached=False, prov=current_provider, mdl=current_model)
+            except Exception as e:
+                print(f"  PDF generation failed: {e}")
 
     # Auto-generate PDF if we loaded a problem with an existing solution
     if problem_statement and solution:
         print("  Auto-generating PDF for loaded solution...")
         try:
-            export_to_pdf(
-                problem_statement, solution, full_verification,
-                log_dir, base_name, api_key,
-                provider=provider_name, model_name=model_name,
-            )
+            do_export_pdf(use_cached=True)
         except Exception as e:
             print(f"  PDF generation failed: {e}")
 
@@ -1239,9 +1379,9 @@ def main():
                 break
             elif cmd == "help" or cmd == "h":
                 print("  /run, /r          Run the agent")
-                print("  /load <path>      Load agent memory file (.mem)")
-                print("  /problem <path>   Load problem file")
-                print("  /partial <path>   Load LaTeX file as partial solution (starting point)")
+                print("  /load [path]      Load memory file (.mem); no arg = pick from list")
+                print("  /problem [path]   Load problem file; no arg = pick from list")
+                print("  /partial [path]   Load LaTeX as partial solution; no arg = pick from list")
                 print("  /edit             Draft or refine problem with agent (no problem = direct chat)")
                 print("  /edit_existing    Browse and edit an existing problem file")
                 print("  /done             Save current draft as problem (in edit mode)")
@@ -1282,65 +1422,59 @@ def main():
                 except KeyboardInterrupt:
                     print("\n  Interrupted. Back to prompt.")
             elif cmd == "load":
+                mem_path = None
                 if rest:
-                    load_from_memory(rest.strip())
+                    mem_path = os.path.abspath(rest.strip())
+                else:
+                    mem_path = pick_file(log_dir, [".mem"], "memory")
+                if mem_path:
+                    load_from_memory(mem_path)
                     # Auto-generate PDF if solution exists after loading
                     if problem_statement and solution:
                         print("  Auto-generating PDF...")
                         try:
-                            export_to_pdf(
-                                problem_statement, solution, full_verification,
-                                log_dir, base_name, api_key,
-                                provider=provider_name, model_name=model_name,
-                            )
+                            do_export_pdf(use_cached=True)
                         except Exception as e:
                             print(f"  PDF generation failed: {e}")
-                else:
-                    mems = list_memory_files(log_dir)
-                    if not mems:
-                        print(f"  No .mem files in {log_dir}")
-                    else:
-                        print("  Memory files (use /load <name>):")
-                        for m in mems[:15]:
-                            print(f"    {m}")
             elif cmd == "problem":
+                prob_path = None
                 if rest:
-                    load_from_problem(rest.strip())
+                    prob_path = os.path.abspath(rest.strip())
+                else:
+                    problems_dir = os.path.join(os.path.dirname(script_dir), "problems")
+                    prob_path = pick_file(problems_dir, [".txt", ".md"], "problem")
+                if prob_path:
+                    load_from_problem(prob_path)
                     # Auto-generate PDF if solution exists (from resumed memory)
                     if problem_statement and solution:
                         print("  Auto-generating PDF...")
                         try:
-                            export_to_pdf(
-                                problem_statement, solution, full_verification,
-                                log_dir, base_name, api_key,
-                                provider=provider_name, model_name=model_name,
-                            )
+                            do_export_pdf(use_cached=True)
                         except Exception as e:
                             print(f"  PDF generation failed: {e}")
-                else:
-                    print("  Usage: /problem <path>")
             elif cmd == "partial":
                 # Load a LaTeX file as partial solution
-                if not rest:
-                    print("  Usage: /partial <latex_file>")
-                    print("  Loads a LaTeX file and extracts a partial solution as starting point.")
-                    print("  Requires a problem to be loaded first (/problem).")
-                    continue
                 if not problem_statement:
                     print("  Load a problem first (/problem <path>), then use /partial.")
                     continue
-                latex_path = rest.strip()
-                if not os.path.isabs(latex_path) and not os.path.exists(latex_path):
-                    # Try log_dir and common locations
-                    for candidate_dir in [log_dir, os.path.join(script_dir, "..", "run_logs"), "."]:
-                        candidate = os.path.join(candidate_dir, latex_path)
-                        if os.path.exists(candidate):
-                            latex_path = candidate
-                            break
-                latex_path = os.path.abspath(latex_path)
-                if not os.path.exists(latex_path):
-                    print(f"  File not found: {latex_path}")
-                    continue
+                latex_path = None
+                if rest:
+                    latex_path = rest.strip()
+                    if not os.path.isabs(latex_path) and not os.path.exists(latex_path):
+                        # Try log_dir and common locations
+                        for candidate_dir in [log_dir, os.path.join(script_dir, "..", "run_logs"), "."]:
+                            candidate = os.path.join(candidate_dir, latex_path)
+                            if os.path.exists(candidate):
+                                latex_path = candidate
+                                break
+                    latex_path = os.path.abspath(latex_path)
+                    if not os.path.exists(latex_path):
+                        print(f"  File not found: {latex_path}")
+                        continue
+                else:
+                    latex_path = pick_file(log_dir, [".tex", ".md", ".txt"], "partial solution")
+                    if not latex_path:
+                        continue
                 try:
                     with open(latex_path, "r", encoding="utf-8") as f:
                         latex_content = f.read()
@@ -1378,14 +1512,10 @@ def main():
                             print(f"    {pl}")
                         if len(partial_sol.strip().split("\n")) > 8:
                             print("    ...")
-                        # Auto-generate PDF
+                        # Auto-generate PDF (no cache since solution is new)
                         print("  Auto-generating PDF for partial solution...")
                         try:
-                            export_to_pdf(
-                                problem_statement, solution, "",
-                                log_dir, base_name, api_key,
-                                provider=provider_name, model_name=model_name,
-                            )
+                            do_export_pdf(use_cached=False)
                         except Exception as e:
                             print(f"  PDF generation failed: {e}")
                         print("  Use /run to continue proving from this starting point.")
