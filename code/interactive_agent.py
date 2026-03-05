@@ -26,7 +26,8 @@ try:
     # Slash-command completions
     _READLINE_COMMANDS = [
         "/run", "/r", "/load", "/problem", "/prompt", "/add", "/p",
-        "/partial", "/comment", "/c", "/pcomment", "/vcomment",
+        "/partial", "/paste", "/stash", "/st",
+        "/comment", "/c", "/pcomment", "/vcomment",
         "/comments", "/del_comment", "/clear_comments",
         "/export", "/e", "/status", "/s", "/list", "/l", "/clear",
         "/analyze", "/edit", "/edit_problem", "/done", "/edit_existing", "/save_as",
@@ -69,908 +70,38 @@ import subprocess
 import sys
 from datetime import datetime
 
-import requests
+# Optional: prompt_toolkit for Ctrl+V image paste
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.history import InMemoryHistory
+    from prompt_toolkit.completion import WordCompleter
+    from prompt_toolkit.patch_stdout import patch_stdout as _pt_patch_stdout
+    HAS_PROMPT_TOOLKIT = True
+except ImportError:
+    HAS_PROMPT_TOOLKIT = False
 
 # Import from agent module
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import agent as agent_module
-from res2md import memory_to_tex as res2md_memory_to_tex
-
-# --- Fast models for cheap tex composition/fixing (per provider) ---
-# For kimi: use kimi-k2.5 without thinking
-FAST_MODELS = {
-    "gemini": "gemini-2.5-flash-lite",
-    "openai": "gpt-4o-mini",
-    "kimi": "kimi-k2.5",  # Use kimi-k2.5 without thinking for LaTeX tasks
-}
-
-# Legacy constants for backward compatibility
-FLASH_MODEL = FAST_MODELS["gemini"]
-FLASH_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{FLASH_MODEL}:generateContent"
-
-TEX_PREAMBLE = r"""\documentclass{article}
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage{amsmath, amssymb, amsthm}
-\usepackage{geometry}
-\geometry{a4paper, margin=1in}
-
-"""
-
-TEX_COMPOSE_TEMPLATE = """You are a LaTeX expert. Convert the following mathematical solution and verification report into a single, valid LaTeX document.
-
-Requirements:
-- Preserve all mathematical content exactly; use $...$ for inline math, \\[...\\] for display math
-- Convert markdown **bold** to \\textbf{}, ### sections to \\section{}, etc.
-- Output ONLY the complete LaTeX source, no explanations
-- Keep it concise but complete
-
-Structure:
-1. Problem Statement
-2. Solution (Summary + Detailed Solution)
-3. Verification Report
-
-=== PROBLEM ===
-<<<PROBLEM>>>
-
-=== SOLUTION ===
-<<<SOLUTION>>>
-
-=== VERIFICATION ===
-<<<VERIFICATION>>>
-"""
-
-TEX_FIX_TEMPLATE = """Fix the LaTeX compilation errors. Output ONLY the corrected complete LaTeX source.
-
-=== ERROR ===
-<<<ERROR>>>
-
-=== LATEX ===
-<<<LATEX>>>
-"""
-
-
-def call_fast_model(prompt: str, api_key: str, provider: str = "gemini",
-                    model_name: str = None, enable_thinking: bool = True, timeout: int = 300) -> str:
-    """Call the fast/cheap model for the specified provider.
-
-    For kimi: if model_name is provided, use it with thinking disabled (for LaTeX tasks).
-    Default timeout increased to 300 seconds (5 minutes) to handle longer processing times, especially for LaTeX generation.
-    """
-    provider = provider.lower()
-    
-    if provider == "gemini":
-        model = model_name or FAST_MODELS.get("gemini", "gemini-2.5-flash-lite")
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.0, "topP": 1.0},
-        }
-        headers = {"Content-Type": "application/json", "X-goog-api-key": api_key}
-        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-    
-    elif provider == "openai":
-        model = model_name or FAST_MODELS.get("openai", "gpt-4o-mini")
-        api_url = "https://api.openai.com/v1/chat/completions"
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.0,
-        }
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    
-    elif provider == "kimi":
-        # For kimi: use provided model_name or fallback to kimi-k2.5
-        # For LaTeX tasks, thinking is disabled by default
-        model = model_name or FAST_MODELS.get("kimi", "kimi-k2.5")  # Default: kimi-k2.5 without thinking
-        api_url = "https://api.moonshot.cn/v1/chat/completions"
-
-        # kimi-k2.5 requires temperature=1.0
-        # For LaTeX tasks (kimi-k2.5), use temperature=1.0
-        temp = 1.0 if model == "kimi-k2.5" else 0.3
-
-        # For LaTeX generation, we need a longer timeout (600 seconds)
-        # Check if this is a LaTeX task by looking for LaTeX-specific content in the prompt
-        latex_task = any(marker in prompt for marker in ["LaTeX", "latex", "\\documentclass", "\\begin{document}"])
-        kimi_timeout = 600 if latex_task else timeout
-
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": temp,
-        }
-        # For kimi-k2-thinking, disable thinking when enable_thinking is False
-        if not enable_thinking and "thinking" in model:
-            payload["extra_body"] = {
-                "enable_thinking": False
-            }
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=kimi_timeout)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    
-    else:
-        # Fallback to Gemini
-        return call_fast_model(prompt, api_key, "gemini", model_name, enable_thinking, timeout)
-
-
-# Backward compatibility alias
-def call_flash(prompt: str, api_key: str, timeout: int = 300) -> str:
-    """Legacy function, defaults to Gemini flash model."""
-    return call_fast_model(prompt, api_key, "gemini", None, True, timeout)
-
-
-def call_fast_model_chat(
-    system_prompt: str,
-    contents: list,
-    api_key: str,
-    provider: str = "gemini",
-    model_name: str = None,
-    enable_thinking: bool = True,
-    timeout: int = 300,
-) -> str:
-    """Multi-turn chat with fast model. 
-    contents format for gemini: [{"role":"user","parts":[{"text":"..."}]}, ...]
-    contents format for openai/kimi: [{"role":"user","content":"..."}, ...]
-    
-    For kimi: if model_name is provided, use it with thinking disabled (for LaTeX tasks).
-    """
-    provider = provider.lower()
-    
-    if provider == "gemini":
-        model = model_name or FAST_MODELS.get("gemini", "gemini-2.5-flash-lite")
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        payload = {
-            "systemInstruction": {"role": "system", "parts": [{"text": system_prompt}]},
-            "contents": contents,
-            "generationConfig": {"temperature": 0.3, "topP": 1.0},
-        }
-        headers = {"Content-Type": "application/json", "X-goog-api-key": api_key}
-        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-    
-    elif provider == "openai":
-        # Convert Gemini-style contents to OpenAI-style messages
-        messages = []
-        if system_prompt.strip():
-            messages.append({"role": "system", "content": system_prompt})
-        
-        for item in contents:
-            role = item.get("role", "user")
-            # Handle Gemini format: parts[0].text
-            if "parts" in item and item["parts"]:
-                content = item["parts"][0].get("text", "")
-            else:
-                content = item.get("content", "")
-            messages.append({"role": role, "content": content})
-        
-        model = model_name or FAST_MODELS.get("openai", "gpt-4o-mini")
-        api_url = "https://api.openai.com/v1/chat/completions"
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": 0.3,
-        }
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    
-    elif provider == "kimi":
-        # Convert Gemini-style contents to OpenAI-style messages
-        messages = []
-        if system_prompt.strip():
-            messages.append({"role": "system", "content": system_prompt})
-
-        for item in contents:
-            role = item.get("role", "user")
-            # Handle Gemini format: parts[0].text
-            if "parts" in item and item["parts"]:
-                content = item["parts"][0].get("text", "")
-            else:
-                content = item.get("content", "")
-            messages.append({"role": role, "content": content})
-
-        # For kimi: use provided model_name or fallback to kimi-k2.5
-        # For LaTeX tasks, thinking is disabled by default
-        model = model_name or FAST_MODELS.get("kimi", "kimi-k2.5")
-        api_url = "https://api.moonshot.cn/v1/chat/completions"
-
-        # kimi-k2.5 requires temperature=1.0
-        temp = 1.0 if model == "kimi-k2.5" else 0.3
-
-        # Check if this might be a LaTeX task by looking at system_prompt or first user message
-        latex_task = False
-        if system_prompt and any(marker in system_prompt for marker in ["LaTeX", "latex", "\\documentclass", "\\begin{document}"]):
-            latex_task = True
-        elif messages and any(any(marker in msg.get("content", "") for marker in ["LaTeX", "latex", "\\documentclass", "\\begin{document}"]) for msg in messages):
-            latex_task = True
-
-        # For LaTeX generation, use a longer timeout
-        kimi_timeout = 600 if latex_task else timeout
-
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temp,
-        }
-        # For kimi-k2-thinking, disable thinking when enable_thinking is False
-        if not enable_thinking and "thinking" in model:
-            payload["extra_body"] = {
-                "enable_thinking": False
-            }
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=kimi_timeout)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    
-    else:
-        # Fallback to Gemini
-        return call_fast_model_chat(system_prompt, contents, api_key, "gemini", model_name, enable_thinking, timeout)
-
-
-# Backward compatibility alias
-def call_flash_chat(
-    system_prompt: str,
-    contents: list,
-    api_key: str,
-    timeout: int = 300,
-) -> str:
-    """Legacy function, defaults to Gemini flash model."""
-    return call_fast_model_chat(system_prompt, contents, api_key, "gemini", None, True, timeout)
-
-
-PARTIAL_SOLUTION_EXTRACT_TEMPLATE = """You are an expert mathematician. You are given a problem statement and a LaTeX document that contains a partial or draft solution (possibly incomplete, informal, or mixed with scratch work).
-
-Your task is to extract and reorganize the mathematical content into a clean **partial solution** that can serve as a starting point for further rigorous proof work.
-
-### Output Format ###
-
-Your response MUST follow this exact structure:
-
-**1. Summary**
-
-*   **a. Verdict:** State clearly: "This is a partial solution." Then list the main rigorous conclusions that have been established so far.
-*   **b. Method Sketch:** Describe the overall strategy attempted so far, including:
-    - What has been proven rigorously
-    - What key lemmas or intermediate results are established
-    - What remains to be proven or what gaps exist
-    - Any promising directions or approaches identified but not yet completed
-
-**2. Detailed Solution**
-
-Present the rigorous parts of the solution in a clean, step-by-step format:
-- Include all definitions, lemmas, and proofs that are mathematically sound
-- Clearly mark where the proof is incomplete with comments like "[TODO: ...]" or "[Gap: ...]"
-- Preserve all correct mathematical reasoning from the original
-- Remove scratch work, dead ends, and informal notes that don't contribute to the proof
-- Use TeX for all mathematics: $...$ for inline, \\[...\\] for display
-
-### Important Guidelines ###
-- Be faithful to the original content — do NOT invent new proofs or fill gaps yourself
-- If the original contains errors, note them but include the surrounding correct work
-- Organize the content logically even if the original is disorganized
-- Keep all established results, even if the overall proof is incomplete
-
-=== PROBLEM STATEMENT ===
-<<<PROBLEM>>>
-
-=== LATEX DOCUMENT ===
-<<<LATEX>>>
-"""
-
-PROBLEM_ANALYSIS_PROMPT = """You are an expert mathematician. Analyze the following mathematical problem statement for quality, completeness, and well-definedness.
-
-Check for the following issues:
-
-1. **Undefined terms**: Are all mathematical objects, sets, or structures clearly defined? (e.g., does it say "for all $n$" without specifying $n \\in \\mathbb{Z}^+$?)
-2. **Ambiguity**: Is the problem statement unambiguous? Could it be interpreted in multiple ways?
-3. **Missing constraints**: Are there necessary constraints or conditions that are missing? (e.g., boundedness, finiteness, positivity)
-4. **Goal clarity**: Is it clear what needs to be proved, found, or computed?
-5. **Mathematical correctness**: Does the statement make mathematical sense? Are there obvious contradictions?
-6. **Notation consistency**: Is mathematical notation used consistently?
-7. **Self-containedness**: Can the problem be understood without external references?
-
-### Output Format ###
-
-**Verdict**: One of:
-- "PASS" — the problem is well-defined, complete, and ready for solving.
-- "FIXABLE" — there are issues but they can be fixed automatically (list the fixes).
-- "NEEDS_INPUT" — there are issues that require human clarification (list the questions).
-
-**Issues** (if any): A numbered list of issues found, each with:
-- Category (from the list above)
-- Description of the issue
-- Suggested fix (for FIXABLE issues) or question to ask the user (for NEEDS_INPUT)
-
-**Fixed Problem** (only if verdict is FIXABLE): Output the corrected problem statement with all fixes applied. Preserve the original structure and style as much as possible.
-
-=== PROBLEM STATEMENT ===
-<<<PROBLEM>>>
-"""
-
-EDIT_PROBLEM_SYSTEM = """You help the user formulate or refine a mathematical problem for an IMO-style solver.
-
-- Ask clarifying questions. Suggest structure (hypotheses, goal, constraints).
-- Use TeX for math: $n$, $\\mathbb{R}$, $$display math$$
-- When the user indicates they're done (e.g. "done", "that's it"), output ONLY the final problem statement, nothing else.
-- The final problem should be self-contained, clear, and suitable for rigorous proof.
-- Be concise."""
-
-
-def _extract_latex(out: str) -> str:
-    out = out.strip()
-    if out.startswith("```"):
-        lines = out.split("\n")
-        if "latex" in lines[0].lower() or "tex" in lines[0].lower() or lines[0] == "```":
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        out = "\n".join(lines)
-    return out.strip()
-
-
-def extract_partial_solution(problem: str, latex_content: str, api_key: str,
-                             provider: str = "gemini", model_name: str = None) -> str:
-    """Extract and organize a partial solution from a LaTeX document.
-
-    Uses the main model (not the fast/cheap model) for better quality extraction.
-
-    Args:
-        problem: The problem statement
-        latex_content: Raw LaTeX content from the file
-        api_key: API key for the provider
-        provider: API provider name
-        model_name: Optional specific model name
-
-    Returns:
-        Organized partial solution text in the format expected by the proof engine
-    """
-    prompt = PARTIAL_SOLUTION_EXTRACT_TEMPLATE.replace("<<<PROBLEM>>>", problem)
-    prompt = prompt.replace("<<<LATEX>>>", latex_content)
-
-    # Use the main model (not fast model) for better quality
-    return call_fast_model(prompt, api_key, provider, model_name, enable_thinking=True, timeout=600)
-
-
-def analyze_problem(problem: str, api_key: str,
-                    provider: str = "gemini", model_name: str = None) -> dict:
-    """Analyze a problem statement for quality and well-definedness.
-
-    Returns a dict with keys:
-        verdict: "PASS", "FIXABLE", or "NEEDS_INPUT"
-        analysis: Full analysis text from the LLM
-        fixed_problem: The fixed problem text (if FIXABLE), or None
-        issues: List of issue descriptions (if any)
-    """
-    prompt = PROBLEM_ANALYSIS_PROMPT.replace("<<<PROBLEM>>>", problem)
-    try:
-        result = call_fast_model(prompt, api_key, provider, model_name, enable_thinking=True, timeout=300)
-    except Exception as e:
-        return {"verdict": "ERROR", "analysis": str(e), "fixed_problem": None, "issues": []}
-
-    # Parse verdict
-    result_upper = result.upper()
-    if "VERDICT" in result_upper and "PASS" in result_upper.split("VERDICT")[1][:50]:
-        verdict = "PASS"
-    elif "FIXABLE" in result_upper:
-        verdict = "FIXABLE"
-    elif "NEEDS_INPUT" in result_upper:
-        verdict = "NEEDS_INPUT"
-    else:
-        verdict = "PASS"  # Default to pass if unclear
-
-    # Extract fixed problem (between "Fixed Problem" and end, or next section)
-    fixed_problem = None
-    if verdict == "FIXABLE":
-        markers = ["**Fixed Problem**", "## Fixed Problem", "### Fixed Problem",
-                    "Fixed Problem:", "**Fixed Problem:**"]
-        for marker in markers:
-            if marker in result:
-                fixed_part = result.split(marker, 1)[1].strip()
-                # Remove leading/trailing markdown fences
-                if fixed_part.startswith("```"):
-                    lines = fixed_part.split("\n")
-                    lines = lines[1:]  # skip ```
-                    end_idx = next((i for i, l in enumerate(lines) if l.strip() == "```"), len(lines))
-                    fixed_part = "\n".join(lines[:end_idx])
-                fixed_problem = fixed_part.strip()
-                break
-
-    return {
-        "verdict": verdict,
-        "analysis": result,
-        "fixed_problem": fixed_problem,
-        "issues": [],
-    }
-
-
-def compose_tex_with_fast_model(problem: str, solution: str, verification: str, api_key: str,
-                                 provider: str = "gemini", model_name: str = None) -> str:
-    """Compose LaTeX using the provider's fast/cheap model.
-    
-    For kimi: uses kimi-k2.5 without thinking (FAST_MODELS['kimi']).
-    """
-    prompt = TEX_COMPOSE_TEMPLATE.replace("<<<PROBLEM>>>", problem)
-    prompt = prompt.replace("<<<SOLUTION>>>", solution or "(No solution yet)")
-    prompt = prompt.replace("<<<VERIFICATION>>>", verification or "(No verification yet)")
-    
-    # For kimi, disable thinking for LaTeX tasks (no fast model, but thinking disabled)
-    # Use a longer timeout for LaTeX tasks, especially for Kimi
-    try:
-        if provider.lower() == "kimi":
-            # Use a longer timeout (600 seconds / 10 minutes) for Kimi LaTeX tasks
-            out = call_fast_model(prompt, api_key, provider, model_name, enable_thinking=False, timeout=600)
-        else:
-            # For other providers, use the default timeout (now 300 seconds)
-            out = call_fast_model(prompt, api_key, provider, model_name)
-    except Exception as e:
-        # If fast model fails (e.g., API error), raise with more context
-        raise RuntimeError(f"Fast model failed for {provider}: {e}") from e
-    
-    latex = _extract_latex(out)
-    if "\\documentclass" in latex:
-        return latex
-    if "\\begin{document}" in latex and "\\end{document}" in latex:
-        return TEX_PREAMBLE + "\n" + latex
-    return TEX_PREAMBLE + "\n\\begin{document}\n\n" + latex + "\n\n\\end{document}\n"
-
-
-def fix_tex_with_fast_model(latex: str, error: str, api_key: str,
-                            provider: str = "gemini", model_name: str = None,
-                            timeout: int = 300) -> str:
-    """Fix LaTeX errors using the provider's fast/cheap model.
-
-    For kimi: uses kimi-k2.5 without thinking (FAST_MODELS['kimi']).
-    Default timeout increased to 300 seconds (5 minutes) to handle longer processing times.
-    """
-    prompt = TEX_FIX_TEMPLATE.replace("<<<ERROR>>>", error).replace("<<<LATEX>>>", latex)
-    
-    # For kimi, disable thinking for LaTeX tasks (no fast model, but thinking disabled)
-    if provider.lower() == "kimi":
-        # Use a longer timeout (600 seconds / 10 minutes) for Kimi LaTeX tasks
-        return _extract_latex(call_fast_model(prompt, api_key, provider, model_name, enable_thinking=False, timeout=600))
-    else:
-        return _extract_latex(call_fast_model(prompt, api_key, provider, model_name, timeout=timeout))
-
-
-# Backward compatibility aliases
-def compose_tex_with_flash(problem: str, solution: str, verification: str, api_key: str, timeout: int = 300) -> str:
-    """Legacy function, defaults to Gemini flash model with increased timeout."""
-    return compose_tex_with_fast_model(problem, solution, verification, api_key, "gemini", None)
-
-
-def fix_tex_with_flash(latex: str, error: str, api_key: str, timeout: int = 300) -> str:
-    """Legacy function, defaults to Gemini flash model."""
-    return fix_tex_with_fast_model(latex, error, api_key, "gemini", None, timeout)
-
-
-def compile_latex(tex_path: str, work_dir: str) -> Tuple[bool, str]:
-    try:
-        result = subprocess.run(
-            ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", os.path.basename(tex_path)],
-            cwd=work_dir,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        err = (result.stderr or "") + (result.stdout or "")
-        return result.returncode == 0, err
-    except subprocess.TimeoutExpired:
-        return False, "Compilation timed out"
-    except FileNotFoundError:
-        return False, "pdflatex not found. Install TeX Live or MacTeX."
-
-
-def open_pdf(pdf_path: str) -> None:
-    path = os.path.abspath(pdf_path)
-    if not os.path.exists(path):
-        print(f"PDF not found: {path}")
-        return
-    system = platform.system()
-    if system == "Darwin":
-        subprocess.run(["open", path], check=False)
-    elif system == "Linux":
-        subprocess.run(["xdg-open", path], check=False)
-    elif system == "Windows":
-        os.startfile(path)  # type: ignore
-    else:
-        print(f"PDF: {path}")
-
-
-def export_to_md(
-    problem: str,
-    solution: str,
-    verification: str,
-    output_dir: str,
-    base_name: str,
-) -> str:
-    """Export solution to Markdown file.
-    
-    This is a robust fallback when PDF generation fails or when pdflatex is not available.
-    Returns the path to the generated MD file.
-    """
-    md_name = f"{base_name}.md"
-    md_path = os.path.join(output_dir, md_name)
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Build markdown content
-    lines = []
-    lines.append("# IMO Problem Solution\n")
-    lines.append(f"*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
-    lines.append("---\n")
-    
-    # Problem Statement
-    lines.append("\n## Problem Statement\n")
-    lines.append(problem if problem else "*(No problem statement)*")
-    lines.append("\n")
-    
-    # Solution
-    lines.append("\n## Solution\n")
-    if solution:
-        lines.append(solution)
-    else:
-        lines.append("*(No solution yet)*")
-    lines.append("\n")
-    
-    # Verification
-    lines.append("\n## Verification Report\n")
-    if verification:
-        lines.append(verification)
-    else:
-        lines.append("*(No verification yet)*")
-    lines.append("\n")
-    
-    # Write to file
-    with open(md_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    
-    return md_path
-
-
-def export_to_pdf(
-    problem: str,
-    solution: str,
-    verification: str,
-    output_dir: str,
-    base_name: str,
-    api_key: str,
-    max_attempts: int = 5,
-    provider: str = "gemini",
-    model_name: str = None,
-    cached_tex: str = None,
-) -> Tuple[bool, Optional[str]]:
-    """Export solution to PDF using the provider's fast model for LaTeX composition.
-
-    For kimi: uses kimi-k2.5 without thinking for LaTeX tasks.
-    If PDF generation fails, automatically falls back to Markdown export.
-
-    Args:
-        cached_tex: If provided, use this LaTeX source directly instead of calling LLM.
-
-    Returns:
-        Tuple of (success, final_tex_content).
-        success: True if PDF was generated.
-        final_tex_content: The compiled LaTeX source (for caching), or None on failure.
-    """
-    tex_name = f"{base_name}-temp.tex"
-    tex_path = os.path.join(output_dir, tex_name)
-    pdf_path = os.path.join(output_dir, f"{base_name}-temp.pdf")
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Clean up previous generated files
-    temp_extensions = ['.pdf', '.aux', '.log', '.out', '.toc', '.synctex.gz', '.fdb_latexmk', '.fls']  # Note: .log is LaTeX log, not proof log
-    for ext in temp_extensions:
-        old_file = os.path.join(output_dir, f"{base_name}-temp{ext}")
-        if os.path.exists(old_file):
-            try:
-                os.remove(old_file)
-            except OSError:
-                pass  # Ignore errors if file is locked
-
-    skip_fast_fix = False
-    latex = None
-
-    if cached_tex:
-        # Use cached LaTeX content, skip LLM call
-        print("  Using cached LaTeX content...")
-        latex = cached_tex
-    else:
-        # Get the model name for display
-        provider_lower = provider.lower()
-        fast_model = FAST_MODELS.get(provider_lower)
-
-        if provider_lower == "kimi":
-            latex_model = fast_model or "kimi-k2.5"
-            print(f"  Composing LaTeX using {provider} ({latex_model}, no thinking)...")
-        else:
-            latex_model = fast_model or model_name or "default"
-            print(f"  Composing LaTeX using {provider}'s fast model ({latex_model})...")
-
-        try:
-            latex = compose_tex_with_fast_model(problem, solution, verification or "Verification pending.",
-                                                 api_key, provider, latex_model)
-        except Exception as e:
-            print(f"  Fast model failed ({e}), using res2md fallback...")
-            skip_fast_fix = True
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".tex", delete=False) as f:
-                tmp = f.name
-            try:
-                mem = {"problem_statement": problem, "solution": solution}
-                res2md_memory_to_tex(mem, tmp)
-                with open(tmp, "r", encoding="utf-8") as f:
-                    latex = f.read()
-                if verification:
-                    from res2md import markdown_to_latex
-                    latex = latex.replace(
-                        "\\end{document}",
-                        "\n\\section{Verification Report}\n\n" + markdown_to_latex(verification) + "\n\\end{document}",
-                    )
-            finally:
-                os.unlink(tmp)
-
-    # If we still don't have valid LaTeX, skip to Markdown export
-    if not latex or not isinstance(latex, str):
-        print("  Could not generate LaTeX content.")
-        print("  Falling back to Markdown export...")
-        md_path = export_to_md(problem, solution, verification, output_dir, base_name)
-        print(f"  ✓ Markdown: {md_path}")
-        return False, None
-
-    if "\\begin{document}" not in latex:
-        latex = latex.rstrip() + "\n\n\\begin{document}\n\n\\end{document}\n"
-    if "\\end{document}" not in latex:
-        latex = latex.rstrip() + "\n\n\\end{document}\n"
-
-    # Need provider info for fix attempts
-    if not cached_tex:
-        provider_lower = provider.lower()
-        fast_model = FAST_MODELS.get(provider_lower)
-        latex_model = (fast_model or "kimi-k2.5") if provider_lower == "kimi" else (fast_model or model_name or "default")
-    else:
-        latex_model = None
-
-    for attempt in range(max_attempts):
-        with open(tex_path, "w", encoding="utf-8") as f:
-            f.write(latex)
-        success, err = compile_latex(tex_path, output_dir)
-        if success:
-            print(f"  ✓ PDF: {pdf_path}")
-            open_pdf(pdf_path)
-            return True, latex
-        err_snippet = "\n".join(err.strip().split("\n")[-60:])
-        print(f"  Compile attempt {attempt + 1}/{max_attempts} failed")
-        if attempt < max_attempts - 1 and not skip_fast_fix and latex_model:
-            try:
-                latex = fix_tex_with_fast_model(latex, err_snippet, api_key, provider, latex_model)
-            except Exception as e:
-                print(f"  Fast model fix failed: {e}")
-                break
-    print("  Could not fix LaTeX.")
-    print("  Falling back to Markdown export...")
-    md_path = export_to_md(problem, solution, verification, output_dir, base_name)
-    print(f"  ✓ Markdown: {md_path}")
-    return False, None
-
-
-def _agent_worker(
-    problem_statement: str,
-    other_prompts: list,
-    verify_prompts: list,
-    memory_file: Optional[str],
-    resume: bool,
-    log_dir: str,
-    base_name: str,
-    result_queue: "multiprocessing.Queue",
-    streaming: bool = True,
-    show_thinking: bool = True,
-    interactive: bool = True,
-    provider_name: str = "gemini",
-    model_name: str = None
-) -> None:
-    """Run agent in subprocess; put result in queue. Terminating process kills in-flight API calls."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-    # 根据provider_name选择不同的模块
-    try:
-        if provider_name.lower() in ["openai", "gpt"]:
-            import agent_oai as ag
-            api_key = os.environ.get("OPENAI_API_KEY", "")
-        elif provider_name.lower() in ["kimi", "moonshot"]:
-            # 使用Kimi专用模块
-            print("  Using Kimi API")
-            import agent_kimi as ag
-            api_key = os.environ.get("KIMI_API_KEY", "")
-        else:
-            # 默认使用Gemini
-            import agent as ag
-            api_key = os.environ.get("GOOGLE_API_KEY", "")
-    except ImportError as e:
-        print(f"  Error importing agent module for {provider_name}: {e}")
-        print("  Falling back to default agent module")
-        import agent as ag
-        api_key = os.environ.get("GOOGLE_API_KEY", "")
-
-    def on_result(prob, sol, verif, _iter):
-        print(f"  [iter {_iter}] Exporting PDF...")
-        ok, final_tex = export_to_pdf(prob, sol, verif, log_dir, base_name, api_key, provider=provider_name, model_name=model_name)
-        # Save tex to mem file so main process can reuse it
-        if ok and final_tex and memory_file:
-            try:
-                if os.path.exists(memory_file):
-                    with open(memory_file, "r", encoding="utf-8") as f:
-                        mem_data = json.load(f)
-                    mem_data["cached_tex"] = final_tex
-                    with open(memory_file, "w", encoding="utf-8") as f:
-                        json.dump(mem_data, f, indent=2, ensure_ascii=False)
-            except Exception:
-                pass  # Best-effort in subprocess
-
-    log_path = os.path.join(log_dir, f"{base_name}_interactive.prooflog")
-    ag.set_log_file(log_path)
-
-    try:
-        # 设置模型名称
-        if model_name:
-            # 优先使用set_model函数（agent_kimi支持）
-            if hasattr(ag, "set_model"):
-                ag.set_model(model_name)
-            # 否则尝试直接设置MODEL_NAME
-            elif hasattr(ag, "MODEL_NAME"):
-                ag.MODEL_NAME = model_name
-                print(f"  Set model to {model_name}")
-
-        # 启动agent处理
-        sol = ag.agent(
-            problem_statement,
-            other_prompts,
-            verify_prompts=verify_prompts if verify_prompts else None,
-            memory_file=memory_file,
-            resume_from_memory=resume,
-            on_iteration_result=on_result,
-            streaming=streaming,
-            show_thinking=show_thinking,
-            interactive=interactive
-        )
-        result_queue.put(("ok", sol))
-    except Exception as e:
-        result_queue.put(("error", str(e)))
-    finally:
-        ag.close_log_file()
-
-
-def list_files_by_ext(directory: str, extensions: list) -> list:
-    """List files in directory matching given extensions, sorted by modification time (newest first)."""
-    if not os.path.isdir(directory):
-        return []
-    return sorted(
-        [f for f in os.listdir(directory)
-         if os.path.isfile(os.path.join(directory, f)) and
-         any(f.endswith(ext) for ext in extensions)],
-        key=lambda x: os.path.getmtime(os.path.join(directory, x)),
-        reverse=True,
-    )
-
-
-def pick_file(directory: str, extensions: list, label: str, max_show: int = 20) -> Optional[str]:
-    """Show a numbered list of files and let the user pick one.
-
-    Returns the absolute path of the selected file, or None if cancelled.
-    """
-    files = list_files_by_ext(directory, extensions)
-    if not files:
-        print(f"  No {label} files found in {directory}")
-        return None
-
-    print(f"  Available {label} files:")
-    for i, f in enumerate(files[:max_show]):
-        # Show file size for context
-        fpath = os.path.join(directory, f)
-        size = os.path.getsize(fpath)
-        if size < 1024:
-            size_str = f"{size}B"
-        else:
-            size_str = f"{size // 1024}KB"
-        print(f"    [{i + 1}] {f}  ({size_str})")
-    if len(files) > max_show:
-        print(f"    ... and {len(files) - max_show} more")
-
-    try:
-        sel = input(f"  Select {label} (number, or Enter to cancel): ").strip()
-        if not sel:
-            print("  Cancelled.")
-            return None
-        if not sel.isdigit() or int(sel) < 1 or int(sel) > min(len(files), max_show):
-            print("  Invalid selection.")
-            return None
-        return os.path.abspath(os.path.join(directory, files[int(sel) - 1]))
-    except (KeyboardInterrupt, EOFError):
-        print("\n  Cancelled.")
-        return None
-
-
-def list_memory_files(log_dir: str) -> list:
-    """List .mem files in log_dir (agent memory files)."""
-    if not os.path.isdir(log_dir):
-        return []
-    return sorted(
-        [f for f in os.listdir(log_dir) if f.endswith(".mem")],
-        key=lambda x: os.path.getmtime(os.path.join(log_dir, x)),
-        reverse=True,
-    )
-
-
-def save_problem_to_file(problem_content: str, file_path: str) -> bool:
-    """Save problem content to a file. Returns True if successful."""
-    try:
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(problem_content)
-        return True
-    except Exception as e:
-        print(f"  Error saving problem: {e}")
-        return False
-
-def render_status_bar(problem_loaded: bool, memory_file: Optional[str], solution: bool, prompts: int,
-                     edit_mode: bool = False, original_problem: Optional[str] = None,
-                     streaming: bool = True, thinking: bool = True, interactive: bool = True,
-                     provider: str = "gemini", model: str = None,
-                     num_proof_comments: int = 0,
-                     num_verify_comments: int = 0) -> str:
-    """Render a compact status line like Claude Code."""
-    parts = []
-    if problem_loaded:
-        parts.append("problem ✓")
-    else:
-        parts.append("problem —")
-    if memory_file:
-        parts.append(f"mem:{os.path.basename(memory_file)}")
-    parts.append("solution ✓" if solution else "solution —")
-
-    # Add API provider and model info
-    if provider:
-        provider_info = provider
-        if model:
-            provider_info += f":{model.split('-')[0]}"  # Show first part of model name
-        parts.append(provider_info)
-
-    if edit_mode:
-        if original_problem:
-            parts.append(f"editing:{os.path.basename(original_problem)}")
-        else:
-            parts.append("edit")
-
-    # Add mode indicators
-    mode_parts = []
-    if streaming:
-        mode_parts.append("stream")
-    if thinking:
-        mode_parts.append("think")
-    if interactive:
-        mode_parts.append("interact")
-
-    if mode_parts:
-        parts.append("+".join(mode_parts))
-
-    # Add token quota status if available
-    if hasattr(agent_module, 'TOKEN_QUOTA_EXCEEDED') and agent_module.TOKEN_QUOTA_EXCEEDED:
-        parts.append("⚠️quota:exceeded")
-    elif hasattr(agent_module, 'TOKEN_QUOTA_WARNING') and agent_module.TOKEN_QUOTA_WARNING:
-        parts.append("⚠️quota:low")
-
-    if prompts:
-        parts.append(f"+{prompts} prompt(s)")
-    total_comments = num_proof_comments + num_verify_comments
-    if total_comments:
-        parts.append(f"+{num_proof_comments}p/{num_verify_comments}v comment(s)")
-    return " | ".join(parts)
+from interactive_prompts import (
+    FAST_MODELS, TEX_PREAMBLE, TEX_COMPOSE_TEMPLATE, TEX_FIX_TEMPLATE,
+    PARTIAL_SOLUTION_EXTRACT_TEMPLATE, PROBLEM_ANALYSIS_PROMPT,
+    EDIT_PROBLEM_SYSTEM, IMAGE_OCR_PROMPT,
+)
+from fast_model_client import call_fast_model, call_fast_model_chat, call_flash, call_flash_chat
+from latex_pipeline import (
+    compose_tex_with_fast_model, fix_tex_with_fast_model,
+    compose_tex_with_flash, fix_tex_with_flash,
+    compile_latex, open_pdf, export_to_md, export_to_pdf,
+    extract_partial_solution, analyze_problem,
+)
+from image_ocr import get_clipboard_image, ocr_image_to_latex
+from interactive_utils import (
+    list_files_by_ext, pick_file, list_memory_files,
+    save_problem_to_file, render_status_bar,
+)
+from agent_worker import run_agent_worker
 
 
 def main():
@@ -1038,6 +169,10 @@ def main():
     # API provider settings
     provider_name: str = os.getenv("DEFAULT_MODEL_PROVIDER", "gemini")
     model_name: Optional[str] = None
+    # Image stash: OCR'd LaTeX from clipboard images (via Ctrl+V)
+    image_stash: list = []  # [{"latex": str|None, "status": "ready"|"pending"|"failed"}]
+    import threading as _threading
+    _stash_lock = _threading.Lock()
 
     def load_from_memory(path: str) -> bool:
         nonlocal problem_statement, other_prompts, proof_comments, verify_comments, solution, full_verification, memory_file, base_name, cached_tex
@@ -1365,10 +500,37 @@ def main():
                     memory_file = os.path.join(log_dir, "draft.mem")
                 edit_history = []
                 in_edit_mode = False
-                print(f"  Problem saved ({len(problem_statement)} chars). Use /run to solve.")
-                # If we were editing an existing problem, prompt to save as new file
-                if original_problem_path:
-                    print("  Use /save_as <filename> to save the edited problem to a new file.")
+                print(f"  Problem set ({len(problem_statement)} chars). Use /run to solve.")
+                # Prompt to save to .txt file
+                try:
+                    default_name = (os.path.splitext(os.path.basename(original_problem_path))[0]
+                                    if original_problem_path else base_name or "problem")
+                    user_fname = input(
+                        f"  Save to file? Enter filename (default: {default_name}.txt, Enter to skip): "
+                    ).strip()
+                    if user_fname.lower() not in ("", "n", "no", "skip"):
+                        fname = user_fname if user_fname else default_name
+                        if not os.path.splitext(fname)[1]:
+                            fname += ".txt"
+                        problems_dir = os.path.join(os.path.dirname(script_dir), "problems")
+                        os.makedirs(problems_dir, exist_ok=True)
+                        save_path = os.path.join(problems_dir, fname)
+                        if os.path.exists(save_path):
+                            ow = input(f"  '{fname}' already exists. Overwrite? (y/N): ").strip().lower()
+                            if ow != "y":
+                                print("  Save cancelled.")
+                            elif save_problem_to_file(problem_statement, save_path):
+                                print(f"  ✓ Saved to {save_path}")
+                                original_problem_path = save_path
+                                base_name = os.path.splitext(fname)[0]
+                                memory_file = os.path.join(log_dir, f"{base_name}.mem")
+                        elif save_problem_to_file(problem_statement, save_path):
+                            print(f"  ✓ Saved to {save_path}")
+                            original_problem_path = save_path
+                            base_name = os.path.splitext(fname)[0]
+                            memory_file = os.path.join(log_dir, f"{base_name}.mem")
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  Save skipped.")
                 return True
             in_edit_mode = False
             return True
@@ -1474,7 +636,7 @@ def main():
         # Run agent in subprocess so Ctrl+C can terminate in-flight API calls
         result_queue = multiprocessing.Queue()
         process = multiprocessing.Process(
-            target=_agent_worker,
+            target=run_agent_worker,
             args=(
                 problem_statement,
                 all_prompts,
@@ -1547,12 +709,79 @@ def main():
             do_export_pdf(use_cached=True)
         except Exception as e:
             print(f"  PDF generation failed: {e}")
-    # Auto-analyze problem if newly loaded (no solution yet, not from --partial which handles its own flow)
-    elif problem_statement and not solution and not args.partial:
-        try:
-            do_analyze_problem()
-        except KeyboardInterrupt:
-            print("\n  Analysis skipped.")
+    # (auto-analyze on load removed — use /analyze manually)
+
+    # ── Prompt-toolkit session with Ctrl+V image paste ──────────────────────────
+    _pt_session = None
+
+    if HAS_PROMPT_TOOLKIT:
+        _pt_kb = KeyBindings()
+
+        @_pt_kb.add('c-v')
+        def _ctrl_v_handler(event):
+            """Ctrl+V: capture image from clipboard and queue for OCR."""
+            img_path = get_clipboard_image()
+            if not img_path:
+                return  # No image in clipboard; ignore
+
+            size_kb = max(1, os.path.getsize(img_path) // 1024)
+            with _stash_lock:
+                stash_item = {"status": "pending", "latex": None, "size_kb": size_kb}
+                image_stash.append(stash_item)
+                idx = len(image_stash)
+
+            # Non-blocking: OCR in background thread
+            def _do_ocr():
+                try:
+                    latex = ocr_image_to_latex(img_path, api_key, provider_name, model_name)
+                    with _stash_lock:
+                        if latex and latex.strip():
+                            stash_item["latex"] = latex.strip()
+                            stash_item["status"] = "ready"
+                            preview = stash_item["latex"][:70]
+                            ellipsis = "..." if len(stash_item["latex"]) > 70 else ""
+                            print(f"\n  \u2713 Stash #{idx} ready ({len(stash_item['latex'])} chars): {preview}{ellipsis}")
+                        else:
+                            stash_item["status"] = "failed"
+                            print(f"\n  \u2717 Stash #{idx}: no content recognized")
+                except Exception as e:
+                    with _stash_lock:
+                        stash_item["status"] = "failed"
+                    print(f"\n  \u2717 Stash #{idx} OCR failed: {e}")
+                finally:
+                    try:
+                        os.unlink(img_path)
+                    except Exception:
+                        pass
+                event.app.invalidate()
+
+            _threading.Thread(target=_do_ocr, daemon=True).start()
+            print(f"\n  \U0001f4f7 Stash #{idx}: captured {size_kb}KB, OCR-ing in background...")
+            event.app.invalidate()
+
+        _pt_commands = [
+            "/run", "/r", "/load", "/problem", "/prompt", "/add", "/p",
+            "/partial", "/paste", "/stash", "/st",
+            "/comment", "/c", "/pcomment", "/vcomment",
+            "/comments", "/del_comment", "/clear_comments",
+            "/export", "/e", "/status", "/s", "/list", "/l", "/clear",
+            "/analyze", "/edit", "/edit_problem", "/done", "/edit_existing", "/save_as",
+            "/streaming", "/thinking", "/interactive", "/run_mode", "/quota",
+            "/provider", "/model", "/providers",
+            "/help", "/h", "/quit", "/q", "/exit",
+        ]
+        _pt_completer = WordCompleter(_pt_commands, sentence=True)
+        _pt_session = PromptSession(
+            key_bindings=_pt_kb,
+            history=InMemoryHistory(),
+            completer=_pt_completer,
+        )
+
+    def _get_input(prompt_str: str) -> str:
+        if _pt_session:
+            with _pt_patch_stdout():
+                return _pt_session.prompt(prompt_str)
+        return input(prompt_str)
 
     # Banner
     from datetime import datetime
@@ -1572,10 +801,13 @@ def main():
             enable_streaming, enable_thinking, enable_interactive,
             provider_name, model_name,
             num_proof_comments=len(proof_comments),
-            num_verify_comments=len(verify_comments)
+            num_verify_comments=len(verify_comments),
+            num_stash=len(image_stash),
+            quota_exceeded=getattr(agent_module, 'TOKEN_QUOTA_EXCEEDED', False),
+            quota_warning=getattr(agent_module, 'TOKEN_QUOTA_WARNING', False),
         )
         try:
-            line = input(f"  [{status}]\n  > ").strip()
+            line = _get_input(f"  [{status}]\n  > ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n  Exit.")
             break
@@ -1600,6 +832,8 @@ def main():
                 print("  /load [path]      Load memory file (.mem); no arg = pick from list")
                 print("  /problem [path]   Load problem file; no arg = pick from list")
                 print("  /partial [path]   Load LaTeX as partial solution; no arg = pick from list")
+                print("  /paste            OCR image from clipboard → LaTeX (proof/verify/partial)")
+                print("  /stash, /st       Manage image stash (Ctrl+V to add images)")
                 print("  /analyze          Re-analyze current problem for issues")
                 print("  /edit             Draft or refine problem with agent (no problem = direct chat)")
                 print("  /edit_existing    Browse and edit an existing problem file")
@@ -1678,11 +912,7 @@ def main():
                         except Exception as e:
                             print(f"  PDF generation failed: {e}")
                     elif problem_statement and not solution:
-                        # New problem — auto-analyze
-                        try:
-                            do_analyze_problem()
-                        except KeyboardInterrupt:
-                            print("\n  Analysis skipped.")
+                        print("  Problem loaded. Use /analyze to check it, or /run to solve.")
             elif cmd == "partial":
                 # Load a LaTeX file as partial solution
                 if not problem_statement:
@@ -1754,6 +984,161 @@ def main():
                         print("  Failed to extract partial solution (empty result).")
                 except Exception as e:
                     print(f"  Error extracting partial solution: {e}")
+            elif cmd == "paste":
+                print("  Reading image from clipboard...")
+                img_path = get_clipboard_image()
+                if not img_path:
+                    sys_name = platform.system()
+                    print("  No image found in clipboard.")
+                    if sys_name == "Darwin":
+                        print("  Copy a screenshot first (Cmd+Ctrl+Shift+4 → area, or Cmd+Ctrl+Shift+3).")
+                        print("  If this keeps failing: brew install pngpaste")
+                    elif sys_name == "Linux":
+                        print("  Requires xclip: sudo apt install xclip")
+                    continue
+                size_kb = max(1, os.path.getsize(img_path) // 1024)
+                print(f"  Image captured ({size_kb} KB). Recognizing with {provider_name}...")
+                try:
+                    latex_text = ocr_image_to_latex(img_path, api_key, provider_name, model_name)
+                except Exception as e:
+                    print(f"  OCR failed: {e}")
+                    latex_text = None
+                finally:
+                    try:
+                        os.unlink(img_path)
+                    except Exception:
+                        pass
+                if not latex_text or not latex_text.strip():
+                    print("  No content recognized.")
+                    continue
+                # Show extracted content
+                lines_ocr = latex_text.split("\n")
+                print(f"\n  Extracted ({len(lines_ocr)} lines, {len(latex_text)} chars):")
+                print("  " + "\u2500" * 60)
+                for ocr_line in lines_ocr[:30]:
+                    print(f"  {ocr_line}")
+                if len(lines_ocr) > 30:
+                    print(f"  ... ({len(lines_ocr) - 30} more lines)")
+                print("  " + "\u2500" * 60)
+                print("  Store as: (p) proof comment  (v) verify comment  (s) partial solution  (n) discard")
+                try:
+                    choice = input("  > ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  Discarded.")
+                    continue
+                if choice in ("p", "proof"):
+                    proof_comments.append(latex_text)
+                    save_comments_to_mem()
+                    print(f"  +proof comment #{len(proof_comments)}")
+                elif choice in ("v", "verify"):
+                    verify_comments.append(latex_text)
+                    save_comments_to_mem()
+                    print(f"  +verify comment #{len(verify_comments)}")
+                elif choice in ("s", "partial", "solution"):
+                    solution = latex_text
+                    if memory_file:
+                        agent_module.save_memory(
+                            memory_file, problem_statement, other_prompts,
+                            0, 30, solution, "no", ""
+                        )
+                    print(f"  Partial solution set ({len(latex_text)} chars).")
+                    try:
+                        do_export_pdf(use_cached=False)
+                    except Exception as e:
+                        print(f"  PDF generation failed: {e}")
+                else:
+                    print("  Discarded.")
+            elif cmd in ("stash", "st"):
+                # Interactive stash manager
+                with _stash_lock:
+                    stash_copy = list(image_stash)
+                if not stash_copy:
+                    print("  No stash items. Press Ctrl+V to paste an image from clipboard.")
+                    continue
+
+                def _print_stash(items):
+                    for i, item in enumerate(items):
+                        status_icon = {"ready": "\u2713", "pending": "\u23f3", "failed": "\u2717"}.get(item["status"], "?")
+                        size_str = f" {item['size_kb']}KB" if "size_kb" in item else ""
+                        if item["status"] == "ready" and item["latex"]:
+                            preview = item["latex"][:60].replace("\n", " ")
+                            ellipsis = "..." if len(item["latex"]) > 60 else ""
+                            print(f"    [{i+1}] {status_icon}{size_str} {preview}{ellipsis}")
+                        else:
+                            print(f"    [{i+1}] {status_icon}{size_str} ({item['status']})")
+
+                print(f"  Image stash ({len(stash_copy)} items):")
+                _print_stash(stash_copy)
+                print("  \u2500\u2500\u2500\u2500\u2500")
+                print("  Actions: p <n> = proof comment, vc <n> = verify comment, s <n> = partial solution")
+                print("           d <n> = delete, show <n> = view full text, l = list, q = done")
+                while True:
+                    try:
+                        act_line = input("  stash> ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        print()
+                        break
+                    if not act_line or act_line.lower() in ("q", "quit", "done"):
+                        break
+                    parts_st = act_line.split()
+                    if not parts_st:
+                        continue
+                    act_st = parts_st[0].lower()
+                    if act_st in ("l", "list"):
+                        with _stash_lock:
+                            stash_copy = list(image_stash)
+                        _print_stash(stash_copy)
+                        continue
+                    if len(parts_st) < 2 or not parts_st[1].isdigit():
+                        print("  Usage: p|v|s|d <n>  or  l = list, q = done")
+                        continue
+                    si = int(parts_st[1]) - 1
+                    with _stash_lock:
+                        if si < 0 or si >= len(image_stash):
+                            print(f"  Invalid stash number. Have {len(image_stash)} item(s).")
+                            continue
+                        item = image_stash[si]
+                    if item["status"] == "pending":
+                        print(f"  Stash #{si+1} is still being processed. Try again in a moment.")
+                        continue
+                    if item["status"] == "failed":
+                        print(f"  Stash #{si+1} OCR failed. Cannot apply.")
+                        continue
+                    latex = item["latex"]
+                    if act_st in ("show", "view"):
+                        print(f"  [Stash #{si+1}]")
+                        for stash_line in latex.split("\n"):
+                            print(f"  {stash_line}")
+                    elif act_st == "p":
+                        proof_comments.append(latex)
+                        save_comments_to_mem()
+                        print(f"  +proof comment #{len(proof_comments)} from stash #{si+1}")
+                    elif act_st == "vc":
+                        verify_comments.append(latex)
+                        save_comments_to_mem()
+                        print(f"  +verify comment #{len(verify_comments)} from stash #{si+1}")
+                    elif act_st == "s":
+                        solution = latex
+                        if memory_file:
+                            agent_module.save_memory(
+                                memory_file, problem_statement, other_prompts,
+                                0, 30, solution, "no", ""
+                            )
+                        print(f"  Partial solution set from stash #{si+1} ({len(latex)} chars).")
+                        try:
+                            do_export_pdf(use_cached=False)
+                        except Exception as e:
+                            print(f"  PDF generation failed: {e}")
+                    elif act_st == "d":
+                        with _stash_lock:
+                            if si < len(image_stash):
+                                image_stash.pop(si)
+                        print(f"  Stash #{si+1} deleted.")
+                        with _stash_lock:
+                            stash_copy = list(image_stash)
+                        _print_stash(stash_copy)
+                    else:
+                        print("  Unknown action. Use p / vc / s / d / show / l / q.")
             elif cmd in ("prompt", "add", "p"):
                 if rest:
                     other_prompts.append(rest)
@@ -1943,15 +1328,66 @@ def main():
                     except KeyboardInterrupt:
                         print("\n  Analysis interrupted.")
             elif cmd in ("edit", "edit_problem"):
-                in_edit_mode = True
+                # Multi-line direct input: user types/pastes the problem, Ctrl-D to finish
                 if problem_statement:
-                    try:
-                        do_edit_problem(f"Current draft:\n\n{problem_statement}\n\nHelp me refine it. What should I change?")
-                    except Exception as e:
-                        print(f"  Error: {e}")
-                    print("  Type your feedback or /done to save.")
+                    print("  Current problem (shown for reference):")
+                    for _l in problem_statement.split("\n")[:6]:
+                        print(f"  | {_l}")
+                    if problem_statement.count("\n") >= 6:
+                        print("  | ...")
+                    print()
+                print("  Enter problem statement (Ctrl-D to finish):")
+                edit_lines = []
+                try:
+                    while True:
+                        edit_lines.append(input("  | "))
+                except EOFError:
+                    pass
+                except KeyboardInterrupt:
+                    print("\n  Cancelled.")
+                    continue
+                if edit_lines:
+                    new_problem = "\n".join(edit_lines).strip()
+                    if new_problem:
+                        problem_statement = new_problem
+                        cached_tex = None
+                        edit_history = []
+                        in_edit_mode = False
+                        print(f"  Problem set ({len(problem_statement)} chars).")
+                        # Prompt to save to file
+                        try:
+                            default_name = (os.path.splitext(os.path.basename(original_problem_path))[0]
+                                            if original_problem_path else base_name or "problem")
+                            user_fname = input(
+                                f"  Save to file? Enter filename (default: {default_name}.txt, Enter to skip): "
+                            ).strip()
+                            if user_fname.lower() not in ("", "n", "no", "skip"):
+                                fname = user_fname if user_fname else default_name
+                                if not os.path.splitext(fname)[1]:
+                                    fname += ".txt"
+                                problems_dir = os.path.join(os.path.dirname(script_dir), "problems")
+                                os.makedirs(problems_dir, exist_ok=True)
+                                save_path = os.path.join(problems_dir, fname)
+                                if os.path.exists(save_path):
+                                    ow = input(f"  '{fname}' already exists. Overwrite? (y/N): ").strip().lower()
+                                    if ow != "y":
+                                        print("  Save cancelled.")
+                                    elif save_problem_to_file(problem_statement, save_path):
+                                        print(f"  ✓ Saved to {save_path}")
+                                        original_problem_path = save_path
+                                        base_name = os.path.splitext(fname)[0]
+                                        memory_file = os.path.join(log_dir, f"{base_name}.mem")
+                                elif save_problem_to_file(problem_statement, save_path):
+                                    print(f"  ✓ Saved to {save_path}")
+                                    original_problem_path = save_path
+                                    base_name = os.path.splitext(fname)[0]
+                                    memory_file = os.path.join(log_dir, f"{base_name}.mem")
+                        except (EOFError, KeyboardInterrupt):
+                            print("\n  Save skipped.")
+                    else:
+                        print("  Empty input, problem unchanged.")
                 else:
-                    print("  Edit mode. Chat with agent to draft a problem. Type /done when finished.")
+                    print("  No input, problem unchanged.")
             elif cmd == "done":
                 if in_edit_mode or edit_history:
                     do_edit_problem("I'm done. Please output ONLY the final problem statement, nothing else.")
@@ -2018,7 +1454,7 @@ def main():
                 # Create a filename with proper extension
                 filename = rest.strip()
                 if not (filename.endswith(".md") or filename.endswith(".txt")):
-                    filename += ".md"  # Default to markdown
+                    filename += ".txt"  # Default to plain text
 
                 # Save to problems directory
                 problems_dir = os.path.join(os.path.dirname(script_dir), "problems")
