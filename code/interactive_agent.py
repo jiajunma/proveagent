@@ -141,6 +141,8 @@ def main():
                        help="Specify model name for the selected provider")
     parser.add_argument("--list-providers", action="store_true",
                        help="List available API providers and exit")
+    parser.add_argument("--api-key", "-k", type=str,
+                       help="API key for the selected provider (overrides environment variable)")
 
     args = parser.parse_args()
 
@@ -315,7 +317,7 @@ def main():
     # 创建提供商实例
     print(f"  Using {provider_name} API" + (f" with model {model_name}" if model_name else ""))
     try:
-        model_provider = model_providers.create_provider(provider_name, model_name=model_name)
+        model_provider = model_providers.create_provider(provider_name, api_key=args.api_key, model_name=model_name)
         # 更新状态以记录当前提供商和模型
         provider_name = model_provider.get_name().lower()
         model_name = model_provider.model_name
