@@ -86,6 +86,26 @@ def fix_tex_with_flash(latex: str, error: str, api_key: str, timeout: int = 300)
 
 # ── Compilation / PDF ─────────────────────────────────────────────────────────
 
+def _extract_error_context(log: str, context: int = 10) -> str:
+    """Extract ±context lines around each pdflatex error line from the log."""
+    lines = log.strip().split("\n")
+    error_indices = [i for i, l in enumerate(lines) if l.startswith("!")]
+    if not error_indices:
+        # No '!' errors found; return last context lines as fallback
+        return "\n".join(lines[-context:])
+    seen: set = set()
+    result = []
+    for idx in error_indices:
+        start = max(0, idx - context)
+        end = min(len(lines), idx + context + 1)
+        for i in range(start, end):
+            if i not in seen:
+                seen.add(i)
+                result.append(lines[i])
+        result.append("---")
+    return "\n".join(result)
+
+
 def compile_latex(tex_path: str, work_dir: str) -> Tuple[bool, str]:
     """Compile LaTeX. Returns (pdf_produced, log_output).
 
@@ -239,7 +259,7 @@ def export_to_pdf(
                 print(f"  \u2713 PDF: {pdf_path}")
             open_pdf(pdf_path)
             return True, latex
-        err_snippet = "\n".join(err.strip().split("\n")[-60:])
+        err_snippet = _extract_error_context(err)
         print(f"  Compile attempt {attempt + 1}/{max_attempts}: no PDF produced")
         if attempt < max_attempts - 1 and not skip_fast_fix and latex_model:
             try:
