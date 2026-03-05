@@ -87,14 +87,27 @@ def fix_tex_with_flash(latex: str, error: str, api_key: str, timeout: int = 300)
 # ── Compilation / PDF ─────────────────────────────────────────────────────────
 
 def compile_latex(tex_path: str, work_dir: str) -> Tuple[bool, str]:
+    """Compile LaTeX. Returns (pdf_produced, log_output).
+
+    pdf_produced is True if a PDF file was generated, even when pdflatex
+    reported errors — pdflatex often recovers and produces usable output.
+    """
+    pdf_path = os.path.join(work_dir,
+                            os.path.splitext(os.path.basename(tex_path))[0] + ".pdf")
+    # Remove stale PDF so we can detect fresh production
+    if os.path.exists(pdf_path):
+        try:
+            os.remove(pdf_path)
+        except OSError:
+            pass
     try:
         result = subprocess.run(
-            ["pdflatex", "-interaction=nonstopmode", "-halt-on-error",
-             os.path.basename(tex_path)],
+            ["pdflatex", "-interaction=nonstopmode", os.path.basename(tex_path)],
             cwd=work_dir, capture_output=True, text=True, timeout=60,
         )
         err = (result.stderr or "") + (result.stdout or "")
-        return result.returncode == 0, err
+        pdf_produced = os.path.exists(pdf_path)
+        return pdf_produced, err
     except subprocess.TimeoutExpired:
         return False, "Compilation timed out"
     except FileNotFoundError:
@@ -216,13 +229,18 @@ def export_to_pdf(
     for attempt in range(max_attempts):
         with open(tex_path, "w", encoding="utf-8") as f:
             f.write(latex)
-        success, err = compile_latex(tex_path, output_dir)
-        if success:
-            print(f"  \u2713 PDF: {pdf_path}")
+        pdf_produced, err = compile_latex(tex_path, output_dir)
+        if pdf_produced:
+            # Accept the PDF even if pdflatex reported errors — it may be usable
+            has_errors = "Error" in err or "error" in err
+            if has_errors:
+                print(f"  \u2713 PDF (with some LaTeX errors): {pdf_path}")
+            else:
+                print(f"  \u2713 PDF: {pdf_path}")
             open_pdf(pdf_path)
             return True, latex
         err_snippet = "\n".join(err.strip().split("\n")[-60:])
-        print(f"  Compile attempt {attempt + 1}/{max_attempts} failed")
+        print(f"  Compile attempt {attempt + 1}/{max_attempts}: no PDF produced")
         if attempt < max_attempts - 1 and not skip_fast_fix and latex_model:
             try:
                 latex = fix_tex_with_fast_model(latex, err_snippet, api_key, provider, latex_model)
@@ -230,8 +248,7 @@ def export_to_pdf(
                 print(f"  Fast model fix failed: {e}")
                 break
 
-    print("  Could not fix LaTeX.")
-    print("  Falling back to Markdown export...")
+    print("  Could not produce PDF. Falling back to Markdown export...")
     md_path = export_to_md(problem, solution, verification, output_dir, base_name)
     print(f"  \u2713 Markdown: {md_path}")
     return False, None
