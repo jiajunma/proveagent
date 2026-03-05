@@ -1,0 +1,24 @@
+*** Problem Statement ***
+
+Cellular Contraction of a Convex Polyhedron Complex
+
+Let $E$ be a Euclidean space and $A \subseteq E$ be a **convex polyhedron complex**. By definition, $A$ is a convex closed subset of $E$ that admits a regular CW-complex structure satisfying the following conditions:
+
+* **Cellular Structure**: For every (open) cell $F$ of $A$, the closure $\bar{F}$ is a **convex polyhedron** in $E$.
+* **Locally Finite**: Every compact subset of $E$ contains only **finitely many cells** in $A$.
+* **Skeleton**: We denote the $i$-th skeleton of $A$ as $sk_i A$.
+* **Cellular Convex Hull**: For any subset $S \subseteq A$, the **cellular convex hull** $CCH(S)$ is defined as the smallest convex subcomplex of $A$ containing $S$.
+
+Fix any $0$-cell $x_0$ in $A$. Prove that here exists a **cellular map** $H : A \times [0, 1] \to A$ such that:
+
+1.  **Contraction Property**: $H$ is a cellular contraction from $A$ to $x_0$.
+    * $H(y, 0) = y$ for all $y \in A$.
+    * $H(y, 1) = x_0$ for all $y \in A$.
+2.  **Hull Constraint**: For every $y \in A$, the image of the interval $H(y, [0, 1])$ lies entirely within the cellular convex hull $CCH(\{y, x_0\})$.
+
+
+
+*** Technical Note on Cellularity ***
+As a **cellular map** on the product space $A \times [0, 1]$, the map $H$ respects the skeletal filtration such that:
+$$H(sk_i(A \times [0, 1])) \subseteq sk_i A$$
+This implies that for any point $y$ in the $n$-skeleton of $A$, the path $H(y, t)$ is contained within the $(n+1)$-skeleton of $A$.

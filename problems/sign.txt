@@ -1,0 +1,14 @@
+*** Problem Statement ***
+Signature of group automorphisms on extensions
+
+# Setup 
+
+Let $X$ be a finite set and $\sigma$ a permutation of $X$. The signature $\mathrm{sgn}(\sigma) \in \{\pm 1\}$ is defined as usual.
+
+Let $p$ be an odd prime. Let $H = \langle g \rangle$ be a cyclic group. Let $J$ be a finite $p$-group equipped with an action of $H$ by automorphisms (i.e., $\sigma_g \in \mathrm{Aut}(J)$). Let $U \trianglelefteq J$ be a normal subgroup that is stable under the $H$-action.
+
+Show that
+\[
+\mathrm{sgn}(g|_J) = \mathrm{sgn}(g|_{J/U}) \cdot \mathrm{sgn}(g|_U),
+\]
+where $g|_J$, $g|_U$, and $g|_{J/U}$ denote the permutations induced by $g$ on the underlying sets of $J$, $U$, and the coset space $J/U$, respectively.
