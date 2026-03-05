@@ -1,39 +1,53 @@
-*** Problem Statement ***
-
-# G₁ × G₂ Orbits and Moment Map Images in the Bessel Case
+# Problem: $G$-Orbits on $X = G/H \times \Flag(G)$
 
 ## Setup
 
-Let $n \geq 1$ be an integer. All groups and Lie algebras are over $\mathbb{C}$. Define:
+Let $n \geq 1$ be an integer. All groups and Lie algebras are defined over $\mathbb{C}$. Define:
 
-- **G₁** = $\mathrm{O}_{2n}(\mathbb{C})$ = the complex orthogonal group of $2n \times 2n$ complex matrices preserving the standard quadratic form.
-- **G₂** = $\mathrm{SO}_{2n+1}(\mathbb{C})$ = the complex special orthogonal group of $(2n+1) \times (2n+1)$ complex matrices.
-- **G** = G₁ × G₂ acting on itself by left multiplication.
+- $G_1 = \rO_{2n}(\mathbb{C})$: the complex orthogonal group of $2n \times 2n$ complex matrices preserving the standard quadratic form.
+- $G_2 = \SO_{2n+1}(\mathbb{C})$: the complex special orthogonal group of $(2n+1) \times (2n+1)$ complex matrices.
+- $G = G_1 \times G_2$.
 
-Define the **diagonal embedding** of $\mathrm{O}_{2n}(\mathbb{C})$ into $\mathrm{SO}_{2n+1}(\mathbb{C})$ by
-\[
-g \mapsto \mathrm{diag}(g, \det(g)) = \begin{pmatrix} g & 0 \\ 0 & \det(g) \end{pmatrix} \in \mathrm{SO}_{2n+1}(\mathbb{C}),
-\]
+Define the **diagonal embedding** $\iota: \rO_{2n}(\mathbb{C}) \hookrightarrow \SO_{2n+1}(\mathbb{C})$ by
+
+$$
+    \iota(g) = \mathrm{diag}(g, \det(g)) =
+    \begin{pmatrix}
+        g & 0 \\
+        0 & \det(g)
+    \end{pmatrix},
+$$
+
 where $\det(g) \in \{\pm 1\}$ ensures the block matrix has determinant $1$.
 
-Then define the **Bessel subgroup**
-\[
-H = \{ (g, \mathrm{diag}(g, \det(g))) \mid g \in \mathrm{O}_{2n}(\mathbb{C}) \} \subset G.
-\]
+The **Bessel subgroup** is defined as
 
-Let **M** = $T^*(G/H)$ be the cotangent bundle of the homogeneous space $G/H$, endowed with its canonical symplectic structure. The left action of $G$ on $G/H$ lifts to a Hamiltonian action on $M$, with moment map
-\[
-\mu : M \to \mathfrak{g}^* \rightarrow \mathfrak{g}_1^* \oplus \mathfrak{g}_2^*,
-\]
-where $\mathfrak{g} = \mathrm{Lie}(G)$, $\mathfrak{g}_1 = \mathfrak{so}_{2n}(\mathbb{C})$, $\mathfrak{g}_2 = \mathfrak{so}_{2n+1}(\mathbb{C})$, and we identify $\mathfrak{g}^*$ with $\mathfrak{g}$ via the trace form.
+$$
+    H = \{ (g, \iota(g)) \mid g \in \rO_{2n}(\mathbb{C}) \} \subset G.
+$$
 
----
+Fix a Borel subgroup $B = B_1 \times B_2$ of $G$, where $B_1 \subset G_1$ and $B_2 \subset G_2$ are fixed Borel subgroups. Let $\Flag(G) = G/B$ denote the flag variety of $G$.
 
-## Problems
+Define the variety
 
-1. **Orbit classification:** Determine the $G_1 \times G_2$ orbits on $M$.  
-   That is, classify the orbit space $G \backslash M$ and give explicit representatives or a combinatorial/structural description of the orbits.
+$$
+    X = G/H \times \Flag(G) = G/H \times G/B.
+$$
 
-2. **Moment map images:** For each $G$-orbit $\mathcal{O} \subseteq M$, compute the image $\mu(\mathcal{O}) \subseteq \mathfrak{g}^*$ of the orbit under the moment map.  
-   Describe these images in terms of coadjoint orbits, nilpotent/regular orbits, or other recognizable subsets of $\mathfrak{g}^*$ (e.g. $\mathfrak{g}_1^* \oplus \mathfrak{g}_2^*$).
+The group $G$ acts diagonally on $X$:
 
+$$
+    g \cdot (xH, hB) = (gxH, ghB), \quad g \in G,\ xH \in G/H,\ hB \in G/B.
+$$
+
+## Problem Statement
+
+**Classify the $G$-orbits on $X$.**
+
+More precisely:
+
+1. Parameterize the orbit space $G \backslash X$ in terms of reasonable combinatorial objects (e.g., Weyl group elements, double cosets, or relative position data).
+
+2. Give explicit orbit representatives or a structural description of the orbits.
+
+3. Describe the closure relations and dimensions of the orbits in combinatorial terms.
