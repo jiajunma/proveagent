@@ -2,6 +2,7 @@
 
 import os
 import platform
+import re
 import subprocess
 import tempfile
 from datetime import datetime
@@ -86,6 +87,13 @@ def fix_tex_with_flash(latex: str, error: str, api_key: str, timeout: int = 300)
 
 # ── Compilation / PDF ─────────────────────────────────────────────────────────
 
+def _sanitize_for_xelatex(latex: str) -> str:
+    """Remove pdflatex-specific packages incompatible with XeLaTeX."""
+    latex = re.sub(r'\\usepackage(\[.*?\])?\{inputenc\}', '', latex)
+    latex = re.sub(r'\\usepackage(\[.*?\])?\{fontenc\}', '', latex)
+    return latex
+
+
 def _extract_error_context(log: str, context: int = 10) -> str:
     """Extract ±context lines around each pdflatex error line from the log."""
     lines = log.strip().split("\n")
@@ -122,7 +130,7 @@ def compile_latex(tex_path: str, work_dir: str) -> Tuple[bool, str]:
             pass
     try:
         result = subprocess.run(
-            ["pdflatex", "-interaction=nonstopmode", os.path.basename(tex_path)],
+            ["xelatex", "-interaction=nonstopmode", os.path.basename(tex_path)],
             cwd=work_dir, capture_output=True, text=True, timeout=60,
         )
         err = (result.stderr or "") + (result.stdout or "")
@@ -131,7 +139,7 @@ def compile_latex(tex_path: str, work_dir: str) -> Tuple[bool, str]:
     except subprocess.TimeoutExpired:
         return False, "Compilation timed out"
     except FileNotFoundError:
-        return False, "pdflatex not found. Install TeX Live or MacTeX."
+        return False, "xelatex not found. Install TeX Live or MacTeX."
 
 
 def open_pdf(pdf_path: str) -> None:
@@ -245,6 +253,8 @@ def export_to_pdf(
         latex = latex.rstrip() + "\n\n\\begin{document}\n\n\\end{document}\n"
     if "\\end{document}" not in latex:
         latex = latex.rstrip() + "\n\n\\end{document}\n"
+
+    latex = _sanitize_for_xelatex(latex)
 
     for attempt in range(max_attempts):
         with open(tex_path, "w", encoding="utf-8") as f:

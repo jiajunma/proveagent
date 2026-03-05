@@ -12,8 +12,7 @@ FLASH_MODEL = FAST_MODELS["gemini"]
 FLASH_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{FLASH_MODEL}:generateContent"
 
 TEX_PREAMBLE = r"""\documentclass{article}
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
+\usepackage{fontspec}
 \usepackage{amsmath, amssymb, amsthm}
 \usepackage{geometry}
 \geometry{a4paper, margin=1in}
@@ -23,6 +22,8 @@ TEX_PREAMBLE = r"""\documentclass{article}
 TEX_COMPOSE_TEMPLATE = """You are a LaTeX expert. Convert the following mathematical solution and verification report into a single, valid LaTeX document.
 
 Requirements:
+- Use XeLaTeX-compatible packages: use \\usepackage{fontspec} instead of inputenc/fontenc
+- Do NOT use \\usepackage[utf8]{inputenc} or \\usepackage[T1]{fontenc}
 - Preserve all mathematical content exactly; use $...$ for inline math, \\[...\\] for display math
 - Convert markdown **bold** to \\textbf{}, ### sections to \\section{}, etc.
 - Output ONLY the complete LaTeX source, no explanations
