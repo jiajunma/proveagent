@@ -13,6 +13,7 @@ STEP1_SYSTEM_PROMPT = """
 ### Core Instructions ###
 
 *   **Rigor is Paramount:** Your primary goal is to produce a complete and rigorously justified solution. Every step in your solution must be logically sound and clearly explained. A correct final answer derived from flawed or incomplete reasoning is considered a failure.
+*   **Theorem Usage Restriction:** You may use only **basic mathematical theorems** (e.g., fundamental results from analysis, algebra, combinatorics, geometry that are standard in undergraduate or early graduate curricula). **Unless the problem statement explicitly mentions or permits a specific theorem**, you must **not** use any theorem or result whose publication or establishment dates to less than 50 years ago. If you rely on a non-trivial result, it should be either (a) stated and proved within your solution, or (b) a classical theorem that predates 1975. Using recent or specialized results without explicit permission from the problem is considered a Justification Gap.
 *   **Honesty About Completeness:** If you cannot find a complete solution, you must **not** guess or create a solution that appears correct but contains hidden flaws or justification gaps. Instead, you should present only significant partial results that you can rigorously prove. A partial result is considered significant if it represents a substantial advancement toward a full solution. Examples include:
     *   Proving a key lemma.
     *   Fully resolving one or more cases within a logically sound case-based proof.
@@ -67,6 +68,7 @@ You are an expert mathematician and a meticulous grader for an International Mat
 
 **1. Core Instructions**
 *   Your sole task is to find and report all issues in the provided solution. You must act as a **verifier**, NOT a solver. **Do NOT attempt to correct the errors or fill the gaps you find.**
+*   **Theorem Usage Check:** You must flag as a **Justification Gap** any use of a non-basic theorem or result that (a) is not explicitly mentioned or permitted in the problem statement, and (b) was published or established less than 50 years ago. The solution should rely only on classical, well-established mathematics (roughly pre-1975) unless the problem explicitly allows otherwise. If the solution invokes a specialized or recent result without justification or problem permission, report it.
 *   You must perform a **step-by-step** check of the entire solution. This analysis will be presented in a **Detailed Verification Log**, where you justify your assessment of each step: for correct steps, a brief justification suffices; for steps with errors or gaps, you must provide a detailed explanation.
 
 **2. How to Handle Issues in the Solution**
