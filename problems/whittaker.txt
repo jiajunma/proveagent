@@ -1,0 +1,40 @@
+*** Problem Statement
+
+## Setting
+Let $G$ be a real reductive group.
+
+Let $\pi$ be a Casselman-Wallach representation of $G$.
+
+Let $E$ be a finite-dimensional representation of $G$.
+
+Choose an $\mathfrak{sl}_2$-triple $\{e, h, f\}$ attached to a nilpotent orbit $\mathcal{O}$ (where $e \in \mathcal{O}$).
+
+Let $\mathfrak{g}_i = \{x \in \mathfrak{g} : [h, x] = i x\}$ be the $i$-th eigenspace of $\mathrm{ad}(h)$. Define
+\[
+\mathfrak{n} = \bigoplus_{i \geq 1} \mathfrak{g}_i, \qquad \mathfrak{z} = \bigoplus_{i \geq 2} \mathfrak{g}_i ,
+\]
+so $\mathfrak{z}$ is the center of $\mathfrak{n}$. Let $N$ and $Z$ be the connected unipotent subgroups of $G$ with Lie algebras $\mathfrak{n}$ and $\mathfrak{z}$ respectively. Let $M$ be the centralizer of the $\mathfrak{sl}_2$-triple $\{e, h, f\}$ in $G$.
+
+**Definition (Generalized Whittaker Model)**:
+Define $\psi \colon \mathfrak{z} \to i\mathbb{R}$ by $\psi(X) = i \langle f, X \rangle$, where $\langle \cdot, \cdot \rangle$ is a $G$-invariant non-degenerate bilinear form. Then $\psi$ exponentiates to a unitary character of $Z$, and the bilinear form $(X, Y) \mapsto \psi([X, Y])$ on $\mathfrak{g}_1$ is non-degenerate. Let $\omega_\psi$ be the Heisenberg (oscillator) representation of $N$ with central character $\psi$.
+
+The *generalized Whittaker model* of $\pi$ associated to $\mathcal{O}$ is
+\[
+\mathrm{Wh}_{\mathcal{O}}(\pi) := \mathrm{Hom}_N(\pi|_N,\, \omega_\psi),
+\]
+the space of $N$-equivariant homomorphisms from $\pi$ to $\omega_\psi$. This space carries a natural $\widetilde{M}$-module structure, where $\widetilde{M}$ is the metaplectic cover of $M$ such that $\omega_\psi$ extends to a representation of $N \rtimes \widetilde{M}$.
+
+Consider the tensor product representation $\pi \otimes E$ of $G$.
+
+## Problem
+Prove that there is an isomorphism of $\widetilde{M}$-representations:
+\[
+\mathrm{Wh}_{\mathcal{O}}(\pi \otimes E) \cong \mathrm{Wh}_{\mathcal{O}}(\pi) \otimes E|_M,
+\]
+where $E|_M$ denotes the restriction of $E$ to $M$.
+
+## Known Cases
+- **When $\mathcal{O}$ is the principal nilpotent orbit**: The isomorphism is known.
+
+## Hint
+You may use Bernstein–Beilinson localization on the flag variety to approach this question.

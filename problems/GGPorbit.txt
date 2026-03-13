@@ -1,0 +1,42 @@
+*** Problem Statement ***
+
+# The setting 
+
+We work over $\mathbb{C}$ here. Let $(V, \langle \cdot, \cdot \rangle)$ be a finite-dimensional orthogonal space over $\mathbb{C}$ of dimension $n+1$ with an orthogonal decomposition
+
+$$V = W \oplus L, \quad L = \langle e_{n+1} \rangle$$
+
+where $e_{n+1}$ is a non-isotropic vector with $\langle e_{n+1}, e_{n+1} \rangle = 1$. Let $G_1 = \mathrm{O}(W)$ and $G_2 = \mathrm{SO}(V)$, and we view $G_1$ as a subgroup of $G_2$ via the above decomposition. Let $\mathfrak{g}_1$ and $\mathfrak{g}_2$ be the Lie algebras of $G_1^\circ = \mathrm{SO}(W)$ and $G_2$ respectively. Then we have a natural inclusion $\mathfrak{g}_1 \subset \mathfrak{g}_2$.
+
+Let $G = G_1 \times G_2 = \mathrm{O}(W) \times \mathrm{SO}(V)$ and $X = G_2 = \mathrm{SO}(V)$. $X$ is a $G$-spherical variety via the action
+
+$$(g_1, g_2) \cdot g = (g_1 g g_2^{-1}, g_2), \quad (g_1, g_2) \in G_1 \times G_2,\; g \in \mathrm{SO}(V).$$
+
+Let $M = T^*(X)$ be the cotangent bundle of $X$. Then $M$ is a Hamiltonian $G$-variety with the moment map $\mu = \mu_1 \times \mu_2 \colon M \to \mathfrak{g}_1^* \times \mathfrak{g}_2^*$. Write $M \cong G_2 \times \mathfrak{g}_2^*$. Let $p \colon \mathfrak{g}_2^* \to \mathfrak{g}_1^*$ be the natural projection. Then the moment map is given by
+
+$$\mu_1(g, \xi) = p(\mathrm{Ad}^*(g)\xi), \quad \mu_2(g, \xi) = -\xi, \quad g \in G_2,\; \xi \in \mathfrak{g}_2^*.$$
+
+We identify $\mathfrak{g}_1^*$ and $\mathfrak{g}_2^*$ with $\mathfrak{g}_1$ and $\mathfrak{g}_2$ via the trace form; then the map $p$ is given by the natural projection
+
+$$p \colon \mathfrak{g}_2 \to \mathfrak{g}_1, \quad A \mapsto A|_W.$$
+
+Under the above identification, the moment map is given by
+
+$$\mu_1(g, \xi) = \mathrm{Ad}(g)\xi|_W, \quad \mu_2(g, \xi) = -\xi, \quad g \in G_2,\; \xi \in \mathfrak{g}_2. \tag{1}$$
+
+We denote by $\mathcal{P}^+_n$ the set of partitions of $n$ such that each even part has even multiplicity. Then the nilpotent orbits of $\mathfrak{g}_1$ and $\mathfrak{g}_2$ are parameterized by $\mathcal{P}^+_n$ and $\mathcal{P}^+_{n+1}$ respectively. We denote by $\mathcal{O}_\lambda$ the nilpotent orbit corresponding to a partition $\lambda$.
+
+We are interested in the following question:
+
+**Question**
+
+1. For which pairs of partitions $(\lambda, \mu) \in \mathcal{P}^+_n \times \mathcal{P}^+_{n+1}$ does the nilpotent orbit $\mathcal{O}_\lambda \times \mathcal{O}_\mu \subseteq \mu(M)$? By (1), this is equivalent to asking: for which pairs of partitions $(\lambda, \mu) \in \mathcal{P}^+_n \times \mathcal{P}^+_{n+1}$ does there exist $g \in G_2$ and $\xi \in \mathcal{O}_\mu$ such that $\mathrm{Ad}(g)\xi|_W \in \mathcal{O}_\lambda$?
+
+2. Let $\mathcal{O}_\lambda \subseteq \mathfrak{g}_1$ and $\mathcal{O}_\mu \subseteq \mathfrak{g}_2$ be nilpotent orbits such that $\mathcal{O}_\lambda \times \mathcal{O}_\mu \subseteq \mu(M)$. We choose a point $e = (e_\lambda, e_\mu) \in \mathcal{O}_\lambda \times \mathcal{O}_\mu$ and consider the fiber $M_e = \mu^{-1}(e)$. Find a closed formula for $\dim M_e$.
+
+3. We know that
+
+$$\dim M_e \leq \frac{1}{2} \dim M - \frac{1}{2} (\dim \mathcal{O}_\lambda + \dim \mathcal{O}_\mu).$$
+
+We call $\mathcal{O}_\lambda \times \mathcal{O}_\mu$ a *relevant* orbit if the above inequality is an equality. Find all the relevant nilpotent orbits.
+

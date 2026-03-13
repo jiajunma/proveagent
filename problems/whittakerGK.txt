@@ -1,0 +1,46 @@
+*** Problem Statement
+
+## Setting
+Let $G$ be a real reductive group and $K$ a maximal compact subgroup.
+
+Let $\pi$ be an admissible $(\mathfrak{g}, K)$-module.
+
+Let $E$ be a finite-dimensional $\mathfrak{g}$-module.
+
+Choose an $\mathfrak{sl}_2$-triple $\{e, h, f\}$ attached to a nilpotent orbit $\mathcal{O}$ (where $e \in \mathcal{O}$).
+
+Let $\mathfrak{g}_i = \{x \in \mathfrak{g} : [h, x] = i x\}$ be the $i$-th eigenspace of $\mathrm{ad}(h)$. Define
+\[
+\mathfrak{n} = \bigoplus_{i \geq 1} \mathfrak{g}_i, \qquad \mathfrak{z} = \bigoplus_{i \geq 2} \mathfrak{g}_i,
+\]
+so $\mathfrak{z}$ is the center of $\mathfrak{n}$. Let $N$ and $Z$ be the connected unipotent subgroups of $G$ with Lie algebras $\mathfrak{n}$ and $\mathfrak{z}$ respectively. Let $M$ be the centralizer of the $\mathfrak{sl}_2$-triple $\{e, h, f\}$ in $G$.
+
+**Definition (Generalized Whittaker Model for $(\mathfrak{g}, K)$-modules)**:
+Define $\psi \colon \mathfrak{z} \to i\mathbb{R}$ by $\psi(X) = i \langle f, X \rangle$, where $\langle \cdot, \cdot \rangle$ is a $G$-invariant non-degenerate bilinear form. Then $\psi$ exponentiates to a unitary character of $Z$, and the bilinear form $(X, Y) \mapsto \psi([X, Y])$ on $\mathfrak{g}_1$ is non-degenerate. Let $\omega_\psi$ be the $(\mathfrak{n}, K \cap N)$-module of $K \cap N$-finite vectors in the Heisenberg (oscillator) representation of $N$ with central character $\psi$.
+
+The *generalized Whittaker model* of $\pi$ associated to $\mathcal{O}$ is
+\[
+\mathrm{Wh}_{\mathcal{O}}(\pi) := \mathrm{Hom}_{(\mathfrak{n}, K \cap N)}(\pi|_{\mathfrak{n}},\, \omega_\psi),
+\]
+the space of $(\mathfrak{n}, K \cap N)$-equivariant homomorphisms from $\pi$ to $\omega_\psi$. This space carries a natural $(\mathfrak{m}, K \cap M)$-module structure.
+
+**Diagonal action on $\pi \otimes E$**: The tensor product $\pi \otimes E$ is a $(\mathfrak{g}, K)$-module as follows. For $X \in \mathfrak{g}$, $k \in K$, $v \in \pi$, and $e \in E$:
+\[
+X \cdot (v \otimes e) = (X \cdot v) \otimes e + v \otimes (X \cdot e), \qquad k \cdot (v \otimes e) = (k \cdot v) \otimes (k \cdot e).
+\]
+(Here the $\mathfrak{g}$-action uses the Leibniz rule; the $K$-action is the diagonal action.)
+
+## Problem
+Prove that there is an isomorphism :
+\[
+\mathrm{Wh}_{\mathcal{O}}(\pi \otimes E) \cong \mathrm{Wh}_{\mathcal{O}}(\pi) \otimes E|_{\mathfrak{m}},
+\]
+where $E|_{\mathfrak{m}}$ denotes the restriction of $E$ to $(\mathfrak{m}, K \cap M)$.
+
+Furthermore, show it is $(\mathfrak{m}, K \cap M)$-modules isomorphism. 
+
+## Known Cases
+- **When $\mathcal{O}$ is the principal nilpotent orbit**: The isomorphism is known.
+
+## Hint
+You may use Bernstein–Beilinson localization on the flag variety to approach this question.

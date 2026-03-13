@@ -1,0 +1,83 @@
+*** Problem Statement *** 
+
+# Steinberg Variety for Hyperspherical Varieties
+
+## Background
+
+Let $G$ be a reductive group over $\mathbb{C}$.
+
+**Definition.** A *$G$-hyperspherical variety* $M$ is a smooth affine $G$-Hamiltonian variety satisfying:
+
+1. The space $\mathbb{C}[M]^G$ of $G$-invariant rational functions on $M$ is commutative under the Poisson bracket induced by the symplectic structure on $M$.
+2. The image of the moment map $\mu \colon M \to \mathfrak{g}^*$ intersects the nilcone $\mathcal{N}$ of $\mathfrak{g}^*$.
+3. The stabilizer of a generic point in $M$ is connected.
+
+**Examples:**
+- If $M = T^*X$ is the cotangent bundle of a smooth $G$-variety $X$, then $M$ is hyperspherical iff $X$ is spherical.
+- If $M = W$ is a symplectic representation of $G$, then $M$ is hyperspherical iff $W$ is a multiplicity-free symplectic representation (classified by Knop [MR2236756]).
+
+Let $\pi \colon \widetilde{\mathcal{N}} = T^*(\mathcal{B}) \to \mathcal{N}$ be the Springer resolution of the nilcone $\mathcal{N}$, where $\mathcal{B}$ is the flag variety of $G$. The *Steinberg variety* for a hyperspherical variety $M$ is
+
+$$\mathrm{St}_M := M \times_{\mathfrak{g}^*} \widetilde{\mathcal{N}}.$$
+
+**BFT Conjecture .** $\mathrm{St}_M$ is a Lagrangian subvariety of $M \times \widetilde{\mathcal{N}}$.
+
+## Cotangent bundle case: $M = T^*X$
+
+When $M = T^*X$ for a smooth $G$-variety $X$,
+
+$$\mathrm{St}_M = \bigsqcup_Z T_Z^*(X \times \mathcal{B}),$$
+
+where $Z$ runs over all $G$-orbits in $X \times \mathcal{B}$. Finiteness of the number of $G$-orbits follows from the fact that commutativity of $\mathbb{C}[M]^G$ under the Poisson bracket is equivalent to commutativity of $D(X)^G$ under the usual product, which implies $\mathbb{C}[X]$ is multiplicity-free as a $G$-module, hence $B$ has an open orbit in $X$, and thus $X$ has finitely many $B$-orbits.
+
+---
+
+## Symplectic representation case: $M = W$
+
+**Task:** Generalize the above argument to symplectic representations.
+
+Let $M = W$ be a symplectic representation of $G$ and $\mathcal{W}(W)$ the Weyl algebra of $W$. Commutativity of $\mathbb{C}[M]^G$ under the Poisson bracket is equivalent to commutativity of $\mathcal{W}(W)^G$ under the usual product.
+
+$G$ acts on the set $\mathcal{L}(W)$ of Lagrangians of $W$. Fix a closed orbit $\mathcal{O}$ in $\mathcal{L}(W)$ and $X \in \mathcal{O}$. Let $P = \mathrm{Stab}_G(X)$. Then $P$ is a parabolic subgroup with unipotent radical $U$ and Levi quotient $\iota \colon P \to L = P/U$. Denote the Lie algebras by $\mathfrak{p}, \mathfrak{u}, \mathfrak{l}$.
+
+Choose a Borel subgroup $B \subseteq P$ with Lie algebra $\mathfrak{b}$. Let $\overline{B} = \iota(B)$ and $\overline{\mathfrak{b}} = \mathrm{Lie}(\overline{B})$, so $\overline{B}$ is a Borel subgroup of $L$.
+
+We have an exact sequence
+
+$$0 \longrightarrow \mathfrak{u} \longrightarrow \mathfrak{b} \longrightarrow \overline{\mathfrak{b}} \longrightarrow 0.$$
+
+Take a complete polarization $W = X \oplus Y$ and identify $W$ with $T^*Y$ via the projection $\Pi \colon W \to Y$. Then
+
+$$\mathfrak{b} = \mathfrak{u} \overline{\mathfrak{b}}, \qquad \mathfrak{b}^\perp = \overline{\mathfrak{b}}^\perp \mathfrak{u}^\perp,$$
+
+where $\mathfrak{b}^\perp$ is the annihilator of $\mathfrak{b}$ in $\mathfrak{g}^*$, and similarly for the others.
+
+**Equivalent BFT conjecture.** The BFT conjecture is equivalent to:
+
+$$\Lambda_W = \mu^{-1}(\mathfrak{b}^\perp) \subset W \text{ is a Lagrangian.}$$
+
+**Definition.** The *moment cone* is
+
+$$\mathcal{N}_Y = \{ y \in Y \mid \langle u y, y \rangle = 0,\; \forall u \in \mathfrak{u} \}.$$
+
+$\mathcal{N}_Y$ is $L$-invariant. One can show:
+
+$$\mu^{-1}(\mathfrak{u}^\perp) = \Pi^{-1}(\mathcal{N}_Y).$$
+
+Therefore
+
+$$\Lambda_W = \mu^{-1}(\mathfrak{u}^\perp) \cap \mu^{-1}(\overline{\mathfrak{b}}^\perp) = \bigsqcup_Z T_Z^*(Y),$$
+
+where $Z$ runs over all $\overline{B}$-orbits in $\mathcal{N}_Y$. So the conjecture reduces to finiteness of the number of $\overline{B}$-orbits in $\mathcal{N}_Y$ (i.e., $\mathcal{N}_Y$ is spherical for $\overline{B}$, ignoring normality; note $\mathcal{N}_Y$ is singular).
+
+**Strategy.** Relate $\mathcal{W}(W)^G = \mathcal{D}(Y)^G$ to $\mathcal{D}(\mathcal{N}_Y)^L$ (where $\mathcal{D}(\mathcal{N}_Y)$ is defined using the embedding $\mathcal{N}_Y \subset Y$ and $\mathcal{D}(Y)$):
+
+1. Compute $\mathcal{D}(Y)^U$ or $\mathcal{D}(Y)^{\overline{U}}$ and show that $U$- or $\overline{U}$-invariance implies the support of the differential operator lies in $\mathcal{N}_Y$.
+2. Show $\mathcal{D}(Y)^G = (\mathcal{D}(Y)^U \cap \mathcal{D}(Y)^{\overline{U}})^L$ is isomorphic to $\mathcal{D}(\mathcal{N}_Y)^L$.
+3. If $\mathcal{D}(\mathcal{N}_Y)^L$ is commutative, then $\mathcal{N}_Y$ is spherical for $L$, hence finitely many $\overline{B}$-orbits in $\mathcal{N}_Y$.
+
+## Problem
+
+**Carry out the above strategy or otherwise to prove the equivalent BFT conjecture for symplectic representations.**
+
+(Note: $\mathcal{N}_Y$ is singular; the definition of $\mathcal{D}(\mathcal{N}_Y)$ may require further clarification.)
