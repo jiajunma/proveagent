@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "imo-proof-agent": {
+      "command": "/Users/hoxide/mycodes/IMO25/.venv/bin/python",
+      "args": ["/Users/hoxide/mycodes/IMO25/code/mcp_server.py"],
+      "env": {
+        "GOOGLE_API_KEY": "${GOOGLE_API_KEY}",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+        "KIMI_API_KEY": "${KIMI_API_KEY}"
+      }
+    }
+  }
+}

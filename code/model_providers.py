@@ -120,13 +120,6 @@ class GeminiProvider(ModelProvider):
                 "thinkingBudget": 32768
             }
 
-        # 添加流式输出配置
-        if streaming and self.streaming_supported:
-            if enable_thinking:
-                payload["generationConfig"]["streamingBehavior"] = "THINKING_AND_TEXT"
-            else:
-                payload["generationConfig"]["streamingBehavior"] = "TEXT_ONLY"
-
         # 添加其他提示
         if other_prompts:
             for prompt in other_prompts:
@@ -273,7 +266,6 @@ class GeminiProvider(ModelProvider):
             "generationConfig": {
                 "temperature": 0.1,
                 "maxOutputTokens": 10,
-                "streamingBehavior": "TEXT_ONLY"
             }
         }
 

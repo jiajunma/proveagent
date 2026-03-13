@@ -201,3 +201,27 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# macOS
+.DS_Store
+
+# LaTeX build artifacts in problems/
+problems/*.aux
+problems/*.fdb_latexmk
+problems/*.fls
+problems/*.log
+problems/*.synctex.gz
+problems/*.pdf
+
+# Run logs generated outputs (keep .mem and .md)
+run_logs/*.log
+run_logs/*.prooflog
+run_logs/*.tex
+run_logs/*.aux
+run_logs/*.fdb_latexmk
+run_logs/*.fls
+run_logs/*.synctex.gz
+run_logs/*.pdf
+run_logs/*.txt
+run_logs_gpt5/
+run_logs/_mcp_jobs.json
