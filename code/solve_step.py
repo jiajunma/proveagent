@@ -2,7 +2,7 @@
 """
 Single-step solver for conversational proof workflow.
 
-Does ONE solve or verify call and outputs result to stdout as JSON.
+Does ONE solve, verify, or analyze call and outputs result to stdout as JSON.
 Designed to be called by OpenClaw agent orchestration.
 
 Usage:
@@ -17,6 +17,9 @@ Usage:
 
   # Verify a solution
   python3 solve_step.py verify --problem-file problems/exercise_4_9.txt --solution-file run_logs/exercise_4_9_iter0_solution.md
+
+  # Analyze verification failure (classify + auto-generate hint)
+  python3 solve_step.py analyze --problem-file problems/exercise_4_9.txt --solution-file run_logs/exercise_4_9_iter0_solution.md --bug-report-file run_logs/exercise_4_9_iter0_validation.md
 
   # Solve from stdin (problem text piped in)
   echo "Prove that..." | python3 solve_step.py solve --model gemini-2.5-pro
@@ -212,6 +215,98 @@ def verify(problem_text, solution_text, model_name="gemini-2.5-pro", thinking_bu
     }
 
 
+ANALYZE_FAILURE_PROMPT = """You are analyzing why a mathematical proof verification failed.
+
+Given:
+1. The problem statement
+2. The attempted solution
+3. The verification bug report
+
+Classify the failure into ONE of these categories:
+
+**PROBLEM_ISSUE**: The problem statement is missing conditions, is ambiguous, or is incorrectly formulated.
+- Example: "The problem doesn't specify if the group is finite"
+- Example: "The condition on $n$ is too weak for the claim to hold"
+
+**SOLUTION_ISSUE**: The problem is well-posed, but the solution has errors or gaps that can be fixed.
+- Example: "The induction step has a gap"
+- Example: "Case 2 was not properly handled"
+
+Output format (JSON):
+{
+  "classification": "PROBLEM_ISSUE" or "SOLUTION_ISSUE",
+  "reason": "Brief explanation of why",
+  "suggested_fix": "If PROBLEM_ISSUE: suggested condition to add. If SOLUTION_ISSUE: a hint for fixing the proof"
+}
+
+Output ONLY the JSON, no other text.
+"""
+
+
+def analyze_failure(problem_text, solution_text, bug_report, model_name="gemini-2.5-pro"):
+    """Analyze a verification failure and classify it."""
+    from model_providers import GeminiProvider
+
+    api_key = load_api_key()
+    if not api_key:
+        return {"error": "GOOGLE_API_KEY not found"}
+
+    provider = GeminiProvider(api_key, model_name)
+    provider.check_capabilities()
+
+    user_prompt = f"""### Problem Statement
+{problem_text}
+
+### Attempted Solution
+{solution_text}
+
+### Verification Bug Report
+{bug_report}
+"""
+
+    payload = provider.build_request_payload(
+        system_prompt=ANALYZE_FAILURE_PROMPT,
+        question_prompt=user_prompt,
+        other_prompts=None,
+        enable_thinking=True,
+        streaming=False
+    )
+
+    # Smaller thinking budget for analysis
+    if "generationConfig" not in payload:
+        payload["generationConfig"] = {}
+    payload["generationConfig"]["thinkingConfig"] = {
+        "thinkingBudget": 32768
+    }
+
+    print(f"Analyzing failure with {model_name}...", file=sys.stderr)
+    response_data = provider.send_api_request(payload, streaming=False, show_thinking=False)
+    text, _ = provider.extract_text_from_response(response_data)
+
+    # Parse JSON response
+    try:
+        # Extract JSON from response (may have markdown code block)
+        import re
+        json_match = re.search(r'\{[^}]+\}', text, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+        else:
+            result = json.loads(text)
+        
+        result["action"] = "analyze"
+        result["timestamp"] = datetime.now().isoformat()
+        return result
+    except json.JSONDecodeError:
+        return {
+            "classification": "SOLUTION_ISSUE",
+            "reason": "Could not parse analysis result",
+            "suggested_fix": text[:500],
+            "raw_response": text,
+            "action": "analyze",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 def save_validation(job_name, iteration, validation_text, passed, output_dir=None):
     """Save validation result to standard file format."""
     output_dir = output_dir or RUN_LOGS_DIR
@@ -260,7 +355,7 @@ def save_solution(job_name, iteration, solution_text, output_dir=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Single-step proof solver")
-    parser.add_argument("action", choices=["solve", "improve", "verify"],
+    parser.add_argument("action", choices=["solve", "improve", "verify", "analyze"],
                        help="Action to perform")
     parser.add_argument("--problem-file", "-p", help="Problem file path")
     parser.add_argument("--problem-text", help="Problem text (alternative to file)")
@@ -317,6 +412,16 @@ def main():
         # Use smaller thinking budget for verification (default 65536)
         verify_budget = min(args.thinking_budget, 65536)
         result = verify(problem_text, solution_text, args.model, verify_budget)
+    elif args.action == "analyze":
+        # Analyze a verification failure
+        if not args.solution_file or not args.bug_report_file:
+            print("Error: --solution-file and --bug-report-file required for analyze", file=sys.stderr)
+            sys.exit(1)
+        with open(args.solution_file, "r", encoding="utf-8") as f:
+            solution_text = f.read()
+        with open(args.bug_report_file, "r", encoding="utf-8") as f:
+            bug_report = f.read()
+        result = analyze_failure(problem_text, solution_text, bug_report, args.model)
 
     if "error" in result:
         print(json.dumps(result), file=sys.stderr)
@@ -345,6 +450,11 @@ def main():
             status = "PASSED" if result.get("passed") else "FAILED"
             print(f"Status: {status}\n")
             print(result.get("verification", ""))
+        elif "classification" in result:
+            # Analyze result
+            print(f"Classification: {result.get('classification')}")
+            print(f"Reason: {result.get('reason')}")
+            print(f"Suggested fix: {result.get('suggested_fix')}")
 
 
 if __name__ == "__main__":
