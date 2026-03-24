@@ -21,6 +21,38 @@ except ImportError:
 DEFAULT_TIMEOUT = 7200  # API请求超时时间（秒）
 LATEX_TIMEOUT = 600  # LaTeX生成任务的超时时间（秒）
 
+# 代理配置：环境变量 http_proxy 可能指向 SOCKS5 代理（如 Clash），
+# 需要用 socks5h:// 协议让 requests+PySocks 正确处理。
+def _get_proxies():
+    """返回代理配置 dict，供 requests 使用。"""
+    proxy_url = os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY") or \
+                os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY")
+    if not proxy_url:
+        return None
+    # 已经是 socks5 协议，直接用
+    if proxy_url.startswith("socks"):
+        return {"http": proxy_url, "https": proxy_url}
+    # 环境变量写的 http:// 但实际可能是 SOCKS5 代理（如 Clash mixed port）
+    # 如果 PySocks 可用，改用 socks5h:// 协议（更可靠）
+    try:
+        import socks  # noqa: F401 - PySocks
+        from urllib.parse import urlparse
+        parsed = urlparse(proxy_url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 7897
+        socks5_url = f"socks5h://{host}:{port}"
+        return {"http": socks5_url, "https": socks5_url}
+    except ImportError:
+        # PySocks 不可用，用原始 HTTP 代理
+        return {"http": proxy_url, "https": proxy_url}
+
+def _post_with_fallback(url, **kwargs):
+    """requests.post with proper proxy configuration."""
+    proxies = _get_proxies()
+    if proxies and "proxies" not in kwargs:
+        kwargs["proxies"] = proxies
+    return requests.post(url, **kwargs)
+
 class ModelProvider(ABC):
     """模型提供商的抽象基类"""
 
@@ -152,14 +184,14 @@ class GeminiProvider(ModelProvider):
         if not streaming:
             api_url = self.get_api_url(streaming=False)
             try:
-                response = requests.post(api_url, headers=headers,
-                                        data=json.dumps(payload),
-                                        timeout=DEFAULT_TIMEOUT)
+                response = _post_with_fallback(api_url, headers=headers,
+                                               data=json.dumps(payload),
+                                               timeout=DEFAULT_TIMEOUT)
                 response.raise_for_status()
                 return response.json()
             except requests.exceptions.RequestException as e:
                 print(f"Error during Gemini API request: {e}")
-                if hasattr(e, 'response') and e.response.status_code == 400:
+                if hasattr(e, 'response') and e.response is not None and e.response.status_code == 400:
                     print(f"Raw API Response: {e.response.text[:200]}")
                 raise e
 
@@ -172,9 +204,47 @@ class GeminiProvider(ModelProvider):
                 thinking_active = False
 
                 with requests.Session() as session:
+                    proxies = _get_proxies()
+                    if proxies:
+                        session.proxies.update(proxies)
+                    # TCP keep-alive to prevent proxy idle timeout during long thinking
+                    from requests.adapters import HTTPAdapter
+                    from urllib3.util.retry import Retry
+                    import socket
+                    import urllib3
+
+                    class KeepAliveAdapter(HTTPAdapter):
+                        """HTTPAdapter with TCP keep-alive on all connections."""
+                        def init_poolmanager(self, *args, **kwargs):
+                            kwargs['socket_options'] = urllib3.connection.HTTPConnection.default_socket_options + [
+                                (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+                                (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 15),
+                                (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 4),
+                            ]
+                            # macOS uses TCP_KEEPALIVE instead of TCP_KEEPIDLE
+                            import platform
+                            if platform.system() == 'Darwin':
+                                kwargs['socket_options'].append(
+                                    (socket.IPPROTO_TCP, 0x10, 30)  # TCP_KEEPALIVE on macOS = 30s
+                                )
+                            else:
+                                try:
+                                    kwargs['socket_options'].append(
+                                        (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+                                    )
+                                except AttributeError:
+                                    pass
+                            super().init_poolmanager(*args, **kwargs)
+
+                    adapter = KeepAliveAdapter(
+                        max_retries=Retry(total=2, backoff_factor=1,
+                                          status_forcelist=[502, 503, 504]),
+                    )
+                    session.mount("https://", adapter)
+                    session.mount("http://", adapter)
                     with session.post(api_url, headers=headers,
                                      data=json.dumps(payload),
-                                     stream=True) as response:
+                                     stream=True, timeout=(30, DEFAULT_TIMEOUT)) as response:
                         response.raise_for_status()
 
                         for line in response.iter_lines():
@@ -236,7 +306,7 @@ class GeminiProvider(ModelProvider):
 
             except requests.exceptions.RequestException as e:
                 print(f"Error during streaming Gemini API request: {e}")
-                if hasattr(e, 'response') and e.response.status_code == 400:
+                if hasattr(e, 'response') and e.response is not None and e.response.status_code == 400:
                     print(f"Raw API Response: {e.response.text[:200]}")
                 # 回退到非流式请求
                 return self.send_api_request(payload, streaming=False, show_thinking=False)
@@ -270,9 +340,9 @@ class GeminiProvider(ModelProvider):
         }
 
         try:
-            response = requests.post(test_url, headers=headers,
-                                    data=json.dumps(minimal_payload),
-                                    stream=True, timeout=5)
+            response = _post_with_fallback(test_url, headers=headers,
+                                          data=json.dumps(minimal_payload),
+                                          stream=True, timeout=(10, 30))
             if response.status_code == 200:
                 self.streaming_supported = True
                 print(f"Model {self.model_name} supports streaming")

@@ -3,6 +3,7 @@
 import json
 import requests
 from interactive_prompts import FAST_MODELS
+from model_providers import _post_with_fallback
 
 
 def call_fast_model(prompt: str, api_key: str, provider: str = "gemini",
@@ -19,7 +20,7 @@ def call_fast_model(prompt: str, api_key: str, provider: str = "gemini",
             "generationConfig": {"temperature": 0.0, "topP": 1.0},
         }
         headers = {"Content-Type": "application/json", "X-goog-api-key": api_key}
-        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=timeout)
+        resp = _post_with_fallback(api_url, headers=headers, data=json.dumps(payload), timeout=timeout)
         resp.raise_for_status()
         return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
 
@@ -77,7 +78,7 @@ def call_fast_model_chat(system_prompt: str, contents: list, api_key: str,
             "generationConfig": {"temperature": 0.3, "topP": 1.0},
         }
         headers = {"Content-Type": "application/json", "X-goog-api-key": api_key}
-        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=timeout)
+        resp = _post_with_fallback(api_url, headers=headers, data=json.dumps(payload), timeout=timeout)
         resp.raise_for_status()
         return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
 

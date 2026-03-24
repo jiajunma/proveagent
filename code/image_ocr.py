@@ -11,6 +11,7 @@ from typing import Optional
 import requests
 
 from interactive_prompts import FAST_MODELS, IMAGE_OCR_PROMPT
+from model_providers import _post_with_fallback
 
 
 def get_clipboard_image() -> Optional[str]:
@@ -100,7 +101,7 @@ def ocr_image_to_latex(image_path: str, api_key: str,
             "generationConfig": {"temperature": 0.0},
         }
         headers = {"Content-Type": "application/json", "X-goog-api-key": api_key}
-        resp = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=120)
+        resp = _post_with_fallback(api_url, headers=headers, data=json.dumps(payload), timeout=120)
         resp.raise_for_status()
         return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
 
