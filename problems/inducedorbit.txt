@@ -8,7 +8,7 @@ Let $F$ be a $p$-adic field (a finite extension of $\mathbb{Q}_p$).
 
 Let $(V, \langle \cdot, \cdot \rangle)$ be a finite-dimensional vector space over $F$ equipped with a non-degenerate bilinear form that is either **symmetric** ($\epsilon = +1$) or **alternating** ($\epsilon = -1$). 
 Let $G = Isom(V, \langle \cdot, \cdot \rangle)$ be the isometry group:
-- If $\epsilon = +1$: $G = O(V)$ (orthogonal group), with $\dim V = N$.
+- If $\epsilon = +1$: $G = O(V)$ (full orthogonal group), with $\dim V = N$.
 - If $\epsilon = -1$: $G = Sp(V)$ (symplectic group), with $\dim V = 2n$.
 
 Let $\mathfrak{g} = \mathrm{Lie}(G)$ and let $\mathcal{N}(\mathfrak{g})$ denote the nilpotent cone of $\mathfrak{g}$.
@@ -24,7 +24,7 @@ where $W_i$ is the $i$-dimensional irreducible representation of $\mathfrak{sl}_
 \sum_{i \geq 1} i \cdot \dim_F V_i = \dim_F V.
 \]
 
-The form $\langle \cdot, \cdot \rangle$ on $V$ induces a non-degenerate form on each multiplicity space $V_i$: using the unique (up to scalar) $\mathfrak{sl}_2$-invariant bilinear form on $W_i$, one obtains a non-degenerate bilinear form $\langle \cdot, \cdot \rangle_i$ on $V_i$ of parity
+The form $\langle \cdot, \cdot \rangle$ on $V$ induces a non-degenerate form on each multiplicity space $V_i$: fix a non-degenerate $\mathfrak{sl}_2$-invariant bilinear form on $W_i$, one obtains a non-degenerate bilinear form $\langle \cdot, \cdot \rangle_i$ on $V_i$ of parity
 \[
 \epsilon_i = \epsilon \cdot (-1)^{i-1}.
 \]
@@ -61,11 +61,11 @@ where $\mathfrak{u} = Lie(U)$, and define
 \]
 Then $\Ind_{P}^G \mathcal{O}_L$ is a closed subset of the nilpotent cone of $\mathfrak{g}(F)$.  
 
-We call a nilpotent orbit $\mathcal{O}$ **induced from** $\mathcal{O}_L$ (relative to $P$) if $\mathcal{O}$ is maximal, with respect to closure in the usual topology, among nilpotent orbits contained in $\Ind_{P}^G \mathcal{O}_L$. 
+We call a nilpotent orbit $\mathcal{O}$ **induced from** $\mathcal{O}_L$ (relative to $P$) if $\mathcal{O}$ is maximal, with respect to closure in the p-adic topology, among nilpotent orbits contained in $\Ind_{P}^G \mathcal{O}_L$. 
 
-Now let $\mathcal{O}_{G_0}$ be a rational nilpotent orbit of $G_0 = Isom(V_0)$. Embed it as the nilpotent orbit $\{0\} \times \mathcal{O}_{G_0}$ in the Lie algebra of the Levi $L \cong GL_r(F) \times G_0$ (i.e., the $GL(X)$-factor carries the zero orbit).
+Now let $\mathcal{O}_{0}$ be a rational nilpotent orbit of $G_0 = Isom(V_0)$. Embed it as the nilpotent orbit $\{0\} \times \mathcal{O}_{0}$ in the Lie algebra of the Levi $L \cong GL_r(F) \times G_0$ (i.e., the $GL(X)$-factor carries the zero orbit).
 
-The task is to give an explicit combinatorial algorithm that lists all rational nilpotent orbit $\mathcal{O}$ occurring in $Ind_{G_0}^G(\mathcal{O}_{G_0})$, in terms of the formed multiplicity spaces. Equivalently, express the collection $\{(V'_i, \langle \cdot, \cdot \rangle_i)\}_{i \geq 1}$ that parametrizes each such $\mathcal{O}$ in terms of $\{(V_i^0, \langle \cdot, \cdot \rangle_i^0)\}_{i \geq 1}$ and the integer $r$.
+The task is to give an explicit combinatorial algorithm that lists all induced rational nilpotent orbits  from $\mathcal{O}_{0}$, in terms of the formed multiplicity spaces. Equivalently, express the collection $\{(V'_i, \langle \cdot, \cdot \rangle_i)\}_{i \geq 1}$ that parametrizes each such $\mathcal{O}$ in terms of $\{(V_i^0, \langle \cdot, \cdot \rangle_i^0)\}_{i \geq 1}$ and the integer $r$.
 
 **Prove** that your algorithm correctly produces all induced orbits in question.
 
