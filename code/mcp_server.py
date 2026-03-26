@@ -1,5 +1,5 @@
 """
-MCP Server for IMO Proof Agent.
+MCP Server for IMO Proof Agent (stdio-based).
 
 Exposes the proof agent as an OpenClaw-compatible MCP server with:
 - start_proof   : launch a proof job (returns job_id immediately)
@@ -12,15 +12,19 @@ Exposes the proof agent as an OpenClaw-compatible MCP server with:
 import json
 import os
 import sys
-import time
+import asyncio
 import threading
 import subprocess
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
-from mcp.server.fastmcp import FastMCP
+# Use standard MCP SDK
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Tool, TextContent
+from mcp.server.models import InitializationOptions
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -28,8 +32,48 @@ from mcp.server.fastmcp import FastMCP
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(CODE_DIR)
 LOG_DIR = os.path.join(REPO_DIR, "run_logs")
+HINTS_DIR = os.path.join(REPO_DIR, "problems")
 JOBS_FILE = os.path.join(LOG_DIR, "_mcp_jobs.json")
 os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(HINTS_DIR, exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Hints management (shared between MCP and agent)
+# ---------------------------------------------------------------------------
+def _get_hints_file(base_name: str) -> str:
+    """Get the hints file path for a problem."""
+    return os.path.join(HINTS_DIR, f"{base_name}_hints.txt")
+
+
+def _add_hint_to_file(base_name: str, hint: str) -> str:
+    """Add a hint to the hints file."""
+    hints_file = _get_hints_file(base_name)
+    with open(hints_file, "a", encoding="utf-8") as f:
+        f.write(hint + "\n")
+    return hints_file
+
+
+def _read_hints(base_name: str) -> list:
+    """Read all hints from the hints file."""
+    hints_file = _get_hints_file(base_name)
+    if not os.path.exists(hints_file):
+        return []
+    with open(hints_file, "r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip() and not line.startswith("#")]
+
+
+def _clear_hints(base_name: str) -> str:
+    """Clear all hints for a problem."""
+    hints_file = _get_hints_file(base_name)
+    if os.path.exists(hints_file):
+        os.remove(hints_file)
+    return hints_file
+
+# ---------------------------------------------------------------------------
+# Server instance
+# ---------------------------------------------------------------------------
+app = Server("imo-proof-agent")
 
 # ---------------------------------------------------------------------------
 # Job registry  (persisted to JOBS_FILE so server restarts keep history)
@@ -81,7 +125,7 @@ def _run_job(job_id: str, job: dict):
 
     # Build command
     cmd = [
-        sys.executable,          # same python that runs the server
+        sys.executable,
         os.path.join(CODE_DIR, "agent_worker_subprocess.py"),
         "--problem", problem_text,
         "--mem", mem_path,
@@ -119,32 +163,213 @@ def _run_job(job_id: str, job: dict):
 
 
 # ---------------------------------------------------------------------------
-# FastMCP server
+# MCP Tool Implementations
 # ---------------------------------------------------------------------------
-mcp = FastMCP("IMO Proof Agent")
+
+@app.list_tools()
+async def list_tools() -> list[Tool]:
+    """List available tools."""
+    return [
+        Tool(
+            name="start_proof",
+            description="Start a proof attempt for a math problem. Returns job_id for tracking.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "problem_text": {
+                        "type": "string",
+                        "description": "The full problem statement"
+                    },
+                    "job_name": {
+                        "type": "string",
+                        "description": "Human-readable name (used as base filename). Auto-generated if empty."
+                    },
+                    "resume_from": {
+                        "type": "string",
+                        "description": "job_id of a previous session to resume from its .mem file."
+                    },
+                    "provider": {
+                        "type": "string",
+                        "description": "Model provider: 'gemini' (default), 'openai', or 'kimi'.",
+                        "default": "gemini"
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Specific model name override (e.g. 'gemini-2.5-pro')."
+                    }
+                },
+                "required": ["problem_text"]
+            }
+        ),
+        Tool(
+            name="get_status",
+            description="Get the current status of a proof job.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string",
+                        "description": "The job ID returned by start_proof"
+                    },
+                    "log_lines": {
+                        "type": "number",
+                        "description": "How many trailing lines of the agent log to include.",
+                        "default": 30
+                    }
+                },
+                "required": ["job_id"]
+            }
+        ),
+        Tool(
+            name="list_proofs",
+            description="List all proof sessions (both running and completed).",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
+            name="cancel_proof",
+            description="Cancel a running proof job.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string",
+                        "description": "The job ID to cancel"
+                    }
+                },
+                "required": ["job_id"]
+            }
+        ),
+        Tool(
+            name="export_pdf",
+            description="Compile the current best solution in a proof job to a PDF.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string",
+                        "description": "The job ID whose .mem file contains the solution"
+                    }
+                },
+                "required": ["job_id"]
+            }
+        ),
+        Tool(
+            name="add_hint",
+            description="Add a hint to a running proof job. The agent will read this hint on its next iteration.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string",
+                        "description": "The job ID to add the hint to"
+                    },
+                    "hint": {
+                        "type": "string",
+                        "description": "The hint text (e.g., 'Try using induction', 'Consider case analysis', etc.)"
+                    }
+                },
+                "required": ["job_id", "hint"]
+            }
+        ),
+        Tool(
+            name="get_solution",
+            description="Get the current solution from a proof job.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string",
+                        "description": "The job ID to get the solution from"
+                    }
+                },
+                "required": ["job_id"]
+            }
+        ),
+        Tool(
+            name="list_hints",
+            description="List all pending hints for a proof job.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string",
+                        "description": "The job ID to list hints for"
+                    }
+                },
+                "required": ["job_id"]
+            }
+        ),
+    ]
 
 
-@mcp.tool()
-def start_proof(
+@app.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    """Handle tool calls."""
+    
+    if name == "start_proof":
+        result = await _start_proof(
+            problem_text=arguments.get("problem_text", ""),
+            job_name=arguments.get("job_name", ""),
+            resume_from=arguments.get("resume_from", ""),
+            provider=arguments.get("provider", "gemini"),
+            model=arguments.get("model", "")
+        )
+        return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+    
+    elif name == "get_status":
+        result = await _get_status(
+            job_id=arguments.get("job_id", ""),
+            log_lines=arguments.get("log_lines", 30)
+        )
+        return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+    
+    elif name == "list_proofs":
+        result = await _list_proofs()
+        return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+    
+    elif name == "cancel_proof":
+        result = await _cancel_proof(job_id=arguments.get("job_id", ""))
+        return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+    
+    elif name == "export_pdf":
+        result = await _export_pdf(job_id=arguments.get("job_id", ""))
+        return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+    
+    elif name == "add_hint":
+        result = await _add_hint(
+            job_id=arguments.get("job_id", ""),
+            hint=arguments.get("hint", "")
+        )
+        return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+    
+    elif name == "get_solution":
+        result = await _get_solution(job_id=arguments.get("job_id", ""))
+        return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+    
+    elif name == "list_hints":
+        result = await _list_hints(job_id=arguments.get("job_id", ""))
+        return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
+    
+    else:
+        return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}))]
+
+
+# ---------------------------------------------------------------------------
+# Tool implementations
+# ---------------------------------------------------------------------------
+
+async def _start_proof(
     problem_text: str,
     job_name: str = "",
     resume_from: str = "",
     provider: str = "gemini",
     model: str = "",
 ) -> dict:
-    """
-    Start a proof attempt for a math problem.
-
-    Args:
-        problem_text: The full problem statement.
-        job_name:     Human-readable name (used as base filename). Auto-generated if empty.
-        resume_from:  job_id of a previous session to resume from its .mem file.
-        provider:     Model provider — 'gemini' (default), 'openai', or 'kimi'.
-        model:        Specific model name override (e.g. 'gemini-2.5-pro').
-
-    Returns:
-        {'job_id': str, 'mem_path': str, 'log_path': str}
-    """
+    """Start a proof job."""
+    
     # Determine base name & paths
     if not job_name:
         job_name = "proof_" + datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -158,7 +383,7 @@ def start_proof(
         if prev and os.path.exists(prev["mem_path"]):
             mem_path = prev["mem_path"]
             base_name = prev["base_name"]
-            log_path = prev["log_path"]  # append to same log
+            log_path = prev["log_path"]
             resume = True
         else:
             return {"error": f"Cannot resume: job '{resume_from}' not found or has no .mem file."}
@@ -199,18 +424,9 @@ def start_proof(
     }
 
 
-@mcp.tool()
-def get_status(job_id: str, log_lines: int = 30) -> dict:
-    """
-    Get the current status of a proof job.
-
-    Args:
-        job_id:    The job ID returned by start_proof.
-        log_lines: How many trailing lines of the agent log to include.
-
-    Returns:
-        Status dict including status, current solution preview, and log tail.
-    """
+async def _get_status(job_id: str, log_lines: int = 30) -> dict:
+    """Get job status."""
+    
     job = _get_job(job_id)
     if not job:
         return {"error": f"Job '{job_id}' not found."}
@@ -231,9 +447,8 @@ def get_status(job_id: str, log_lines: int = 30) -> dict:
     pid = job.get("pid")
     if pid and job["status"] == "running":
         try:
-            os.kill(pid, 0)  # signal 0 = existence check
+            os.kill(pid, 0)
         except ProcessLookupError:
-            # Process ended but registry not updated yet — check mem file
             result["status"] = "done (process ended)"
 
     # Load mem file for current solution preview
@@ -265,21 +480,16 @@ def get_status(job_id: str, log_lines: int = 30) -> dict:
     return result
 
 
-@mcp.tool()
-def list_proofs() -> list:
-    """
-    List all proof sessions (both running and completed).
-
-    Returns a list of sessions, newest first, including any .mem files
-    in run_logs/ that have no corresponding job (manually created sessions).
-    """
+async def _list_proofs() -> list:
+    """List all proof sessions."""
+    
     with _registry_lock:
         reg = _load_registry()
 
     results = []
+    known_mems = set()
 
     # Registered jobs
-    known_mems = set()
     for job_id, job in reg.items():
         entry = {
             "job_id": job_id,
@@ -291,7 +501,6 @@ def list_proofs() -> list:
             "mem_path": job["mem_path"],
             "mem_exists": os.path.exists(job["mem_path"]),
         }
-        # Quick peek at mem for iteration count
         if entry["mem_exists"]:
             try:
                 with open(job["mem_path"], "r", encoding="utf-8") as f:
@@ -303,7 +512,7 @@ def list_proofs() -> list:
         known_mems.add(job["mem_path"])
         results.append(entry)
 
-    # Orphan .mem files (from interactive_agent.py sessions)
+    # Orphan .mem files
     for mem_file in Path(LOG_DIR).glob("*.mem"):
         if str(mem_file) not in known_mems:
             try:
@@ -326,14 +535,9 @@ def list_proofs() -> list:
     return results
 
 
-@mcp.tool()
-def cancel_proof(job_id: str) -> dict:
-    """
-    Cancel a running proof job.
-
-    Args:
-        job_id: The job ID to cancel.
-    """
+async def _cancel_proof(job_id: str) -> dict:
+    """Cancel a running proof job."""
+    
     job = _get_job(job_id)
     if not job:
         return {"error": f"Job '{job_id}' not found."}
@@ -360,17 +564,9 @@ def cancel_proof(job_id: str) -> dict:
     return {"message": f"Job '{job_id}' cancelled. Memory file preserved for resume."}
 
 
-@mcp.tool()
-def export_pdf(job_id: str) -> dict:
-    """
-    Compile the current best solution in a proof job to a PDF.
-
-    Args:
-        job_id: The job ID whose .mem file contains the solution.
-
-    Returns:
-        {'success': bool, 'pdf_path': str} or {'error': str}
-    """
+async def _export_pdf(job_id: str) -> dict:
+    """Export solution to PDF."""
+    
     job = _get_job(job_id)
     if not job:
         # Try treating job_id as a mem file stem
@@ -400,7 +596,7 @@ def export_pdf(job_id: str) -> dict:
     problem = mem.get("problem_statement") or ""
     verify = mem.get("verify") or ""
 
-    # Run export in subprocess to avoid import conflicts
+    # Run export in subprocess
     export_script = os.path.join(CODE_DIR, "export_pdf_subprocess.py")
     cmd = [
         sys.executable, export_script,
@@ -437,5 +633,104 @@ def export_pdf(job_id: str) -> dict:
         return {"error": str(e)}
 
 
+async def _add_hint(job_id: str, hint: str) -> dict:
+    """Add a hint to a proof job."""
+    
+    job = _get_job(job_id)
+    if not job:
+        return {"error": f"Job '{job_id}' not found."}
+    
+    base_name = job["base_name"]
+    hints_file = _add_hint_to_file(base_name, hint)
+    
+    return {
+        "success": True,
+        "job_id": job_id,
+        "hint": hint,
+        "hints_file": hints_file,
+        "message": f"Hint added. Agent will read it on next iteration."
+    }
+
+
+async def _get_solution(job_id: str) -> dict:
+    """Get the current solution from a proof job."""
+    
+    job = _get_job(job_id)
+    if not job:
+        # Try treating job_id as a mem file stem
+        candidate = os.path.join(LOG_DIR, f"{job_id}.mem")
+        if os.path.exists(candidate):
+            mem_path = candidate
+            base_name = job_id
+        else:
+            return {"error": f"Job '{job_id}' not found."}
+    else:
+        mem_path = job["mem_path"]
+        base_name = job["base_name"]
+    
+    if not os.path.exists(mem_path):
+        return {"error": "No .mem file found.", "has_solution": False}
+    
+    try:
+        with open(mem_path, "r", encoding="utf-8") as f:
+            mem = json.load(f)
+        
+        solution = mem.get("solution", "")
+        return {
+            "job_id": job_id,
+            "base_name": base_name,
+            "has_solution": bool(solution),
+            "solution": solution,
+            "iterations": mem.get("current_iteration", 0),
+            "timestamp": mem.get("timestamp", "")
+        }
+    except Exception as e:
+        return {"error": f"Could not read .mem file: {e}"}
+
+
+async def _list_hints(job_id: str) -> dict:
+    """List all hints for a proof job."""
+    
+    job = _get_job(job_id)
+    if not job:
+        # Try treating job_id as a mem file stem
+        candidate = os.path.join(LOG_DIR, f"{job_id}.mem")
+        if os.path.exists(candidate):
+            base_name = job_id
+        else:
+            return {"error": f"Job '{job_id}' not found."}
+    else:
+        base_name = job["base_name"]
+    
+    hints = _read_hints(base_name)
+    hints_file = _get_hints_file(base_name)
+    
+    return {
+        "job_id": job_id,
+        "base_name": base_name,
+        "hints_file": hints_file,
+        "hints": hints,
+        "count": len(hints)
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+async def main():
+    """Run the MCP server over stdio."""
+    async with stdio_server() as (read_stream, write_stream):
+        await app.run(
+            read_stream,
+            write_stream,
+            InitializationOptions(
+                server_name="imo-proof-agent",
+                server_version="1.0.0",
+                capabilities={}
+            )
+        )
+
+
 if __name__ == "__main__":
-    mcp.run()
+    asyncio.run(main())
