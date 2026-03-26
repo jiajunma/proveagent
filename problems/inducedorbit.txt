@@ -32,16 +32,13 @@ Concretely:
 - If $V$ is **symplectic** ($\epsilon = -1$): $V_i$ is symplectic when $i$ is odd, and symmetric (i.e., orthogonal) when $i$ is even.
 - If $V$ is **orthogonal** ($\epsilon = +1$): $V_i$ is symmetric when $i$ is odd, and alternating (i.e., symplectic) when $i$ is even. In particular, $\dim V_i$ is even when $i$ is even.
 
-A **rational nilpotent orbit** of $G(F)$ on $\mathcal{N}(\mathfrak{g})(F)$ is uniquely determined by the collection of formed spaces
+A **rational nilpotent orbit** of $G(F)$ on $\mathcal{N}(\mathfrak{g})(F)$ is uniquely determined by the collection of (isometry classes of) formed spaces
 \[
 \{(V_i, \langle \cdot, \cdot \rangle_i)\}_{i \geq 1},
 \]
 where each $(V_i, \langle \cdot, \cdot \rangle_i)$ is a non-degenerate formed space over $F$ of the parity $\epsilon_i$ prescribed above, subject to the compatibility condition that $\bigoplus_i V_i \otimes W_i$ reconstructs $(V, \langle \cdot, \cdot \rangle)$ as a formed space.
-
 Two such collections give the same rational orbit if and only if the formed spaces $(V_i, \langle \cdot, \cdot \rangle_i)$ are isometric for every $i$.
-
-
-Over $F$, the rational refinement is encoded by the isometry classes of the formed spaces $\{(V_i, \langle \cdot, \cdot \rangle_i)\}$. We write the rational orbit as $\mathcal{O}_{\{(V_i, \langle \cdot, \cdot \rangle_i)\}}$, or $\mathcal{O}_{\lambda}$ for short, where $\lambda$ is the formed partition.
+We write the rational orbit as $\mathcal{O}_{\{(V_i, \langle \cdot, \cdot \rangle_i)\}}$, or $\mathcal{O}_{\lambda}$ for short, where $\lambda$ is the formed partition.
 
 
 ### Maximal parabolic subgroups
@@ -66,9 +63,9 @@ Then $\Ind_{P}^G \mathcal{O}_L$ is a closed subset of the nilpotent cone of $\ma
 
 We call a nilpotent orbit $\mathcal{O}$ **induced from** $\mathcal{O}_L$ (relative to $P$) if $\mathcal{O}$ is maximal, with respect to closure in the usual topology, among nilpotent orbits contained in $\Ind_{P}^G \mathcal{O}_L$. 
 
-Now let $\mathcal{O}_{G_0}$ be a rational nilpotent orbit of $G_0 = Isom(V_0)$. Embed it as the nilpotent orbit $\{0\} \times \mathcal{O}_{G_0}$ in the Levi $L \cong GL_r(F) \times G_0$ (i.e., the $GL(X)$-factor carries the zero orbit).
+Now let $\mathcal{O}_{G_0}$ be a rational nilpotent orbit of $G_0 = Isom(V_0)$. Embed it as the nilpotent orbit $\{0\} \times \mathcal{O}_{G_0}$ in the Lie algebra of the Levi $L \cong GL_r(F) \times G_0$ (i.e., the $GL(X)$-factor carries the zero orbit).
 
-The task is to give an explicit combinatorial algorithm that lists every rational nilpotent orbit $\mathcal{O}$ occurring in $Ind_{G_0}^G(\mathcal{O}_{G_0})$, in terms of the formed multiplicity spaces. Equivalently, express the collection $\{(V'_i, \langle \cdot, \cdot \rangle_i)\}_{i \geq 1}$ that parametrizes each such $\mathcal{O}$ in terms of $\{(V_i^0, \langle \cdot, \cdot \rangle_i^0)\}_{i \geq 1}$ and the integer $r$.
+The task is to give an explicit combinatorial algorithm that lists all rational nilpotent orbit $\mathcal{O}$ occurring in $Ind_{G_0}^G(\mathcal{O}_{G_0})$, in terms of the formed multiplicity spaces. Equivalently, express the collection $\{(V'_i, \langle \cdot, \cdot \rangle_i)\}_{i \geq 1}$ that parametrizes each such $\mathcal{O}$ in terms of $\{(V_i^0, \langle \cdot, \cdot \rangle_i^0)\}_{i \geq 1}$ and the integer $r$.
 
 **Prove** that your algorithm correctly produces all induced orbits in question.
 
